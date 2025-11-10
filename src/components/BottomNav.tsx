@@ -1,6 +1,8 @@
 import { Home, FolderOpen, Video, User } from 'lucide-react';
 import { motion } from 'motion/react';
 
+
+
 interface BottomNavProps {
   active: 'home' | 'drafts' | 'record' | 'profile';
   onNavigate: (screen: string) => void;
