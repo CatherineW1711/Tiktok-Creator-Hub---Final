@@ -1,8 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff, Music, VolumeX } from 'lucide-react';
 import { Button } from './ui/button';
 import { Take } from './PublishedTakes';
+import { useAudioPlayer } from '../hooks/useAudioPlayer';
+import { useBeatSync } from '../hooks/useBeatSync';
+import MusicSelector from './MusicSelector';
+import AnimatedGhost, { getChoreographyPattern } from './AnimatedGhost';
+import AISuggestions from './AISuggestions';
+import { generateAISuggestions } from '../utils/aiSuggestions';
+import { availableSongs } from '../utils/beatMaps';
 
 interface DanceModeProps {
   onBack: () => void;
@@ -72,6 +79,10 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   const [selectedTake, setSelectedTake] = useState<string | null>(null);
   const [replayingTake, setReplayingTake] = useState<string | null>(null);
   const [recordedPoseSequence, setRecordedPoseSequence] = useState<number[]>([]);
+  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [beatActive, setBeatActive] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [showAISuggestions, setShowAISuggestions] = useState(false);
   
   // Camera state
   const [facingMode, setFacingMode] = useState<FacingMode>('user');
@@ -81,6 +92,66 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+
+  // Audio player
+  const audioPlayer = useAudioPlayer();
+  
+  // Get current choreography pattern based on song
+  const currentChoreography = audioPlayer.currentTrack 
+    ? getChoreographyPattern(audioPlayer.currentTrack.id)
+    : getChoreographyPattern('greedy');
+  
+  // Map pose index to choreography pose name
+  const getCurrentPoseName = () => {
+    return currentChoreography[currentPose % currentChoreography.length];
+  };
+  
+  // Load saved track from sessionStorage
+  useEffect(() => {
+    const savedTrackId = sessionStorage.getItem('selectedTrack');
+    if (savedTrackId) {
+      const track = availableSongs.find((s) => s.id === savedTrackId);
+      if (track) {
+        audioPlayer.setTrack(track);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save track selection
+  useEffect(() => {
+    if (audioPlayer.currentTrack) {
+      sessionStorage.setItem('selectedTrack', audioPlayer.currentTrack.id);
+    }
+  }, [audioPlayer.currentTrack]);
+
+  // Beat sync - switch pose on beat using song-specific choreography
+  useBeatSync({
+    currentTime: audioPlayer.currentTime,
+    songId: audioPlayer.currentTrack?.id || null,
+    onBeat: () => {
+      // Pulse effect on beat
+      setBeatActive(true);
+      setTimeout(() => setBeatActive(false), 200);
+      
+      if (isRecording || isPreviewPlaying) {
+        setCurrentPose((prev) => {
+          const nextPose = (prev + 1) % currentChoreography.length;
+          if (isRecording) {
+            setRecordedPoseSequence((seq) => [...seq, nextPose]);
+          }
+          return nextPose;
+        });
+      }
+    },
+  });
+  
+  // Update choreography when song changes
+  useEffect(() => {
+    if (audioPlayer.currentTrack) {
+      setCurrentPose(0); // Reset to first pose when song changes
+    }
+  }, [audioPlayer.currentTrack]);
 
   // Initialize camera
   useEffect(() => {
@@ -170,6 +241,12 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
 
     return () => clearInterval(interval);
   }, [isRecording, recordingStartTime]);
+  
+  // Store duration in ref for use in onstop callback
+  const recordingDurationRef = useRef(0);
+  useEffect(() => {
+    recordingDurationRef.current = recordingDuration;
+  }, [recordingDuration]);
 
   // Replay functionality
   useEffect(() => {
@@ -194,13 +271,33 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
 
   const handlePreviewToggle = () => {
     if (isRecording) return;
+    // Hide AI suggestions when starting preview
+    setShowAISuggestions(false);
     setIsPreviewPlaying(!isPreviewPlaying);
     if (isPreviewPlaying) {
       setCurrentPose(0);
+      if (musicEnabled && audioPlayer.currentTrack) {
+        audioPlayer.pause();
+      }
+    } else {
+      if (musicEnabled && audioPlayer.currentTrack) {
+        audioPlayer.play();
+      }
     }
   };
 
-  const startRecording = () => {
+  const handleMusicToggle = () => {
+    setMusicEnabled(!musicEnabled);
+    if (!musicEnabled) {
+      if (audioPlayer.currentTrack) {
+        audioPlayer.play();
+      }
+    } else {
+      audioPlayer.pause();
+    }
+  };
+
+  const startRecording = async () => {
     if (!streamRef.current) {
       alert('Camera not available. Please enable camera access.');
       return;
@@ -219,7 +316,36 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         return;
       }
 
-      const recorder = new MediaRecorder(streamRef.current, { mimeType });
+      // Combine camera stream with BGM audio stream
+      let combinedStream = streamRef.current;
+      
+      if (musicEnabled && audioPlayer.currentTrack) {
+        const audioElement = audioPlayer.getAudioElement();
+        if (audioElement) {
+          try {
+            // Use captureStream() to get audio from HTMLAudioElement
+            const audioStream = (audioElement as any).captureStream 
+              ? (audioElement as any).captureStream() 
+              : (audioElement as any).mozCaptureStream 
+              ? (audioElement as any).mozCaptureStream()
+              : null;
+
+            if (audioStream) {
+              // Create combined stream with video from camera and audio from BGM
+              combinedStream = new MediaStream([
+                ...streamRef.current.getVideoTracks(),
+                ...audioStream.getAudioTracks(),
+              ]);
+            } else {
+              console.warn('captureStream not available, recording video only');
+            }
+          } catch (error) {
+            console.warn('Failed to capture audio stream:', error);
+          }
+        }
+      }
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType });
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
@@ -228,25 +354,43 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         }
       };
 
+      // Capture start time and sequence for use in onstop callback
+      const startTimeForCallback = Date.now();
+      const sequenceForCallback = [currentPose];
+      
       recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        
+        // Calculate duration - use the ref value which captures the latest duration
+        const calculatedDuration = recordingDurationRef.current > 0 
+          ? recordingDurationRef.current 
+          : Math.max(1, Math.floor((Date.now() - startTimeForCallback) / 1000));
+        
+        // Generate AI suggestions
+        const suggestions = generateAISuggestions({
+          duration: calculatedDuration,
+          poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
+          lastMove: getCurrentPoseName(),
+          songId: audioPlayer.currentTrack?.id,
+        });
+        setAiSuggestions(suggestions);
+        setShowAISuggestions(true);
         
         // Convert blob to data URL for persistence
         const reader = new FileReader();
         reader.onloadend = () => {
           const dataUrl = reader.result as string;
           
-          const duration = Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000);
           const now = new Date();
           const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           
           const newTake: Take = {
             id: Date.now().toString(),
-            duration: duration,
-            lastMove: dancePoses[currentPose].name,
+            duration: calculatedDuration,
+            lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
-            poseSequence: recordedPoseSequence,
+            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
             blobUrl: dataUrl, // Store as data URL for persistence
           };
 
@@ -256,17 +400,26 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           console.error('Failed to convert blob to data URL');
           // Fallback: use blob URL (won't persist across reloads)
           const blobUrl = URL.createObjectURL(blob);
-          const duration = Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000);
           const now = new Date();
           const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           
+          // Generate AI suggestions for fallback too
+          const suggestions = generateAISuggestions({
+            duration: calculatedDuration,
+            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
+            lastMove: getCurrentPoseName(),
+            songId: audioPlayer.currentTrack?.id,
+          });
+          setAiSuggestions(suggestions);
+          setShowAISuggestions(true);
+          
           const newTake: Take = {
             id: Date.now().toString(),
-            duration: duration,
-            lastMove: dancePoses[currentPose].name,
+            duration: calculatedDuration,
+            lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
-            poseSequence: recordedPoseSequence,
+            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
             blobUrl: blobUrl,
           };
 
@@ -275,6 +428,16 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         reader.readAsDataURL(blob);
       };
 
+      // Hide AI suggestions when starting recording
+      setShowAISuggestions(false);
+      
+      // Start BGM and recording in sync
+      if (musicEnabled && audioPlayer.currentTrack) {
+        audioPlayer.seek(0); // Reset to beginning
+        await audioPlayer.play(0); // Start playback
+      }
+      
+      // Start recording immediately after BGM starts
       recorder.start(100); // Collect data every 100ms
       setIsRecording(true);
       setIsPreviewPlaying(false);
@@ -289,6 +452,9 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   };
 
   const stopRecording = () => {
+    // Capture duration before stopping (recordingDuration state has the current value)
+    const finalDuration = recordingDuration;
+    
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       recorderRef.current.stop();
     }
@@ -297,6 +463,11 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     setRecordingDuration(0);
     setRecordedPoseSequence([]);
     setCurrentPose(0);
+    
+    // Pause music when recording stops
+    if (musicEnabled && audioPlayer.currentTrack) {
+      audioPlayer.pause();
+    }
   };
 
   const handleRecordToggle = () => {
@@ -348,9 +519,24 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           <ArrowLeft className="w-6 h-6" />
         </button>
         <h2 className="text-white" style={{ fontSize: '18px' }}>Dance Mode</h2>
-        <button onClick={onViewTakes} className="text-white text-sm">
-          View Takes
-        </button>
+        <div className="flex items-center space-x-2">
+          <MusicSelector 
+            currentTrack={audioPlayer.currentTrack}
+            onSelectTrack={audioPlayer.setTrack}
+          />
+          <motion.button
+            onClick={handleMusicToggle}
+            whileTap={{ scale: 0.9 }}
+            className="p-2 rounded-lg bg-[#121212] border-2 border-gray-700 hover:border-[#FF0050] transition-colors"
+            title={musicEnabled ? 'Disable Music' : 'Enable Music'}
+          >
+            {musicEnabled ? (
+              <Music className="w-5 h-5 text-[#FF0050]" />
+            ) : (
+              <VolumeX className="w-5 h-5 text-gray-500" />
+            )}
+          </motion.button>
+        </div>
       </div>
 
       {/* Camera Preview */}
@@ -411,76 +597,66 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
                   letterSpacing: '0.5px',
                 }}
               >
-                {dancePoses[currentPose].name}
+                {getCurrentPoseName()}
               </p>
             </motion.div>
           </div>
 
-          {/* Ghost Dancer Overlay */}
-          <AnimatePresence mode="wait">
-            <motion.svg 
-              key={currentPose}
-              className="absolute inset-0 w-full h-full opacity-40 pointer-events-none" 
-              viewBox="0 0 300 350"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 0.4, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.4 }}
-            >
-              <motion.g
-                animate={{
-                  filter: [
-                    'drop-shadow(0 0 8px rgba(0, 245, 255, 0.6))',
-                    'drop-shadow(0 0 12px rgba(0, 245, 255, 0.8))',
-                    'drop-shadow(0 0 8px rgba(0, 245, 255, 0.6))',
-                  ],
-                }}
-                transition={{ duration: 1, repeat: Infinity }}
-              >
-                {/* Head */}
-                <circle cx="150" cy={dancePoses[currentPose].headY} r="18" fill="none" stroke="#00F5FF" strokeWidth="2.5" />
-                {/* Body */}
-                <line x1="150" y1={dancePoses[currentPose].headY + 18} x2="150" y2="200" stroke="#00F5FF" strokeWidth="2.5" />
-                {/* Arms */}
-                <line x1="150" y1="150" x2={dancePoses[currentPose].armLeft.x2} y2={dancePoses[currentPose].armLeft.y2} stroke="#00F5FF" strokeWidth="2.5" />
-                <line x1="150" y1="150" x2={dancePoses[currentPose].armRight.x2} y2={dancePoses[currentPose].armRight.y2} stroke="#00F5FF" strokeWidth="2.5" />
-                {/* Legs */}
-                <line x1="150" y1="200" x2={dancePoses[currentPose].legLeft.x2} y2={dancePoses[currentPose].legLeft.y2} stroke="#00F5FF" strokeWidth="2.5" />
-                <line x1="150" y1="200" x2={dancePoses[currentPose].legRight.x2} y2={dancePoses[currentPose].legRight.y2} stroke="#00F5FF" strokeWidth="2.5" />
-              </motion.g>
-            </motion.svg>
-          </AnimatePresence>
-
-          {/* Status overlay */}
-          <div className="absolute top-4 left-4 right-4 z-10">
-            {isRecording ? (
-              <motion.div 
-                className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
-                animate={{ opacity: [1, 0.7, 1] }}
-                transition={{ duration: 1, repeat: Infinity }}
-              >
-                <div className="w-2 h-2 bg-white rounded-full" />
-                <p className="text-white" style={{ fontSize: '14px' }}>Recording: {formatDuration(recordingDuration)}</p>
-              </motion.div>
-            ) : replayingTake ? (
-              <motion.div 
-                className="bg-[#00F5FF]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
-                animate={{ opacity: [1, 0.8, 1] }}
-                transition={{ duration: 1, repeat: Infinity }}
-              >
-                <Volume2 className="w-4 h-4 text-black" />
-                <p className="text-black" style={{ fontSize: '14px' }}>Replaying Take</p>
-              </motion.div>
-            ) : isPreviewPlaying ? (
-              <div className="bg-[#00F5FF]/90 rounded-lg px-4 py-2">
-                <p className="text-black text-center" style={{ fontSize: '14px' }}>Preview Playing</p>
-              </div>
-            ) : (
-              <div className="bg-black/70 rounded-lg px-4 py-2">
-                <p className="text-white text-center" style={{ fontSize: '14px' }}>Ready to Preview or Record</p>
-              </div>
-            )}
+          {/* Status overlay - with solid background to cover any ghost overflow */}
+          <div className="absolute top-0 left-0 right-0 z-20 pb-2">
+            <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-[#121212] to-transparent pointer-events-none" />
+            <div className="relative top-4 left-4 right-4">
+              {isRecording ? (
+                <motion.div 
+                  className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
+                  animate={{ opacity: [1, 0.7, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                >
+                  <div className="w-2 h-2 bg-white rounded-full" />
+                  <p className="text-white" style={{ fontSize: '14px' }}>Recording: {formatDuration(recordingDuration)}</p>
+                </motion.div>
+              ) : replayingTake ? (
+                <motion.div 
+                  className="bg-[#00F5FF]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
+                  animate={{ opacity: [1, 0.8, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                >
+                  <Volume2 className="w-4 h-4 text-black" />
+                  <p className="text-black" style={{ fontSize: '14px' }}>Replaying Take</p>
+                </motion.div>
+              ) : isPreviewPlaying ? (
+                <div className="bg-[#00F5FF]/90 rounded-lg px-4 py-2">
+                  <p className="text-black text-center" style={{ fontSize: '14px' }}>Preview Playing</p>
+                </div>
+              ) : (
+                <div className="bg-black/70 rounded-lg px-4 py-2">
+                  <p className="text-white text-center" style={{ fontSize: '14px' }}>Ready to Preview or Record</p>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Ghost Dancer Overlay - clipped to not show above banner */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`ghost-${currentPose}`}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+              style={{
+                clipPath: 'inset(60px 0 0 0)', // Clip top 60px to hide anything above status banner
+              }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 0.6, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.4, ease: 'easeOut' }}
+            >
+              <AnimatedGhost
+                poseName={getCurrentPoseName()}
+                beatActive={beatActive}
+                songId={audioPlayer.currentTrack?.id}
+                className="w-full h-full"
+              />
+            </motion.div>
+          </AnimatePresence>
         </motion.div>
 
         {/* Preview/Stop Controls */}
@@ -629,6 +805,14 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           </Button>
         </motion.div>
       </div>
+
+      {/* AI Suggestions */}
+      {showAISuggestions && (
+        <AISuggestions
+          suggestions={aiSuggestions}
+          onClose={() => setShowAISuggestions(false)}
+        />
+      )}
     </div>
   );
 }
