@@ -1,40 +1,135 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2 } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff } from 'lucide-react';
 import { Button } from './ui/button';
+import { Take } from './PublishedTakes';
 
 interface DanceModeProps {
   onBack: () => void;
   onPublish: () => void;
+  onViewTakes: () => void;
+  takes: Take[];
+  setTakes: React.Dispatch<React.SetStateAction<Take[]>>;
 }
 
-// 5 different ghost dancer poses with labels
+type FacingMode = 'user' | 'environment';
+
+// Enhanced dance poses with more distinct movements
 const dancePoses = [
-  { id: 1, name: 'Neutral', headY: 120, armLeft: { x2: 120, y2: 190 }, armRight: { x2: 180, y2: 190 }, legLeft: { x2: 130, y2: 280 }, legRight: { x2: 170, y2: 280 } },
-  { id: 2, name: 'Arm Up', headY: 110, armLeft: { x2: 110, y2: 170 }, armRight: { x2: 190, y2: 170 }, legLeft: { x2: 120, y2: 290 }, legRight: { x2: 180, y2: 290 } },
-  { id: 3, name: 'Leg Lift', headY: 115, armLeft: { x2: 125, y2: 180 }, armRight: { x2: 175, y2: 180 }, legLeft: { x2: 140, y2: 270 }, legRight: { x2: 160, y2: 270 } },
-  { id: 4, name: 'Spin', headY: 120, armLeft: { x2: 115, y2: 195 }, armRight: { x2: 185, y2: 195 }, legLeft: { x2: 125, y2: 285 }, legRight: { x2: 175, y2: 285 } },
-  { id: 5, name: 'Final Pose', headY: 118, armLeft: { x2: 130, y2: 175 }, armRight: { x2: 170, y2: 175 }, legLeft: { x2: 135, y2: 275 }, legRight: { x2: 165, y2: 275 } },
+  { 
+    id: 1, 
+    name: 'Neutral', 
+    headY: 120, 
+    armLeft: { x2: 120, y2: 190 }, 
+    armRight: { x2: 180, y2: 190 }, 
+    legLeft: { x2: 130, y2: 280 }, 
+    legRight: { x2: 170, y2: 280 } 
+  },
+  { 
+    id: 2, 
+    name: 'Arm Wave', 
+    headY: 110, 
+    armLeft: { x2: 100, y2: 140 },  // Left arm raised high
+    armRight: { x2: 200, y2: 140 },  // Right arm raised high
+    legLeft: { x2: 130, y2: 280 }, 
+    legRight: { x2: 170, y2: 280 } 
+  },
+  { 
+    id: 3, 
+    name: 'Leg Lift', 
+    headY: 115, 
+    armLeft: { x2: 125, y2: 180 }, 
+    armRight: { x2: 175, y2: 180 }, 
+    legLeft: { x2: 130, y2: 280 }, 
+    legRight: { x2: 160, y2: 240 }  // Right leg lifted high
+  },
+  { 
+    id: 4, 
+    name: 'Arm Cross', 
+    headY: 120, 
+    armLeft: { x2: 180, y2: 170 },  // Left arm crossed to right
+    armRight: { x2: 120, y2: 170 },  // Right arm crossed to left
+    legLeft: { x2: 125, y2: 285 }, 
+    legRight: { x2: 175, y2: 285 } 
+  },
+  { 
+    id: 5, 
+    name: 'Jump Pose', 
+    headY: 100,  // Head higher (jumping)
+    armLeft: { x2: 110, y2: 150 },  // Both arms up
+    armRight: { x2: 190, y2: 150 }, 
+    legLeft: { x2: 140, y2: 260 },  // Legs spread wider
+    legRight: { x2: 160, y2: 260 } 
+  },
 ];
 
-interface Take {
-  id: string;
-  duration: number;
-  lastMove: string;
-  timestamp: string;
-  poseSequence: number[]; // Store the sequence of poses for replay
-}
-
-export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
+export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTakes }: DanceModeProps) {
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentPose, setCurrentPose] = useState(0);
-  const [takes, setTakes] = useState<Take[]>([]);
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [selectedTake, setSelectedTake] = useState<string | null>(null);
   const [replayingTake, setReplayingTake] = useState<string | null>(null);
   const [recordedPoseSequence, setRecordedPoseSequence] = useState<number[]>([]);
+  
+  // Camera state
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+
+  // Initialize camera
+  useEffect(() => {
+    startCamera();
+    return () => {
+      stopCamera();
+    };
+  }, [facingMode]);
+
+  const startCamera = async () => {
+    try {
+      stopCamera(); // Stop existing stream first
+      setCameraError(null);
+      
+      const constraints: MediaStreamConstraints = {
+        video: { facingMode },
+        audio: true,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(console.error);
+      }
+      
+      setCameraActive(true);
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setCameraError('Camera access denied or unavailable');
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
+  const toggleCamera = () => {
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  };
 
   // Preview animation loop
   useEffect(() => {
@@ -42,12 +137,12 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
     
     const interval = setInterval(() => {
       setCurrentPose((prev) => (prev + 1) % dancePoses.length);
-    }, 1000); // 1 second per pose
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [isPreviewPlaying, isRecording, replayingTake]);
 
-  // Recording animation loop and duration tracker
+  // Recording animation loop
   useEffect(() => {
     if (!isRecording) return;
     
@@ -57,7 +152,7 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
         setRecordedPoseSequence((seq) => [...seq, nextPose]);
         return nextPose;
       });
-    }, 1000); // 1 second per pose
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [isRecording]);
@@ -98,46 +193,126 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
   }, [replayingTake, takes]);
 
   const handlePreviewToggle = () => {
-    if (isRecording) return; // Can't preview while recording
+    if (isRecording) return;
     setIsPreviewPlaying(!isPreviewPlaying);
     if (isPreviewPlaying) {
       setCurrentPose(0);
     }
   };
 
-  const handleRecordToggle = () => {
-    if (isRecording) {
-      // Stop recording and save take
-      const duration = Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000);
-      const now = new Date();
-      const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      
-      const newTake: Take = {
-        id: Date.now().toString(),
-        duration: duration,
-        lastMove: dancePoses[currentPose].name,
-        timestamp: timestamp,
-        poseSequence: recordedPoseSequence,
+  const startRecording = () => {
+    if (!streamRef.current) {
+      alert('Camera not available. Please enable camera access.');
+      return;
+    }
+
+    try {
+      chunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('video/webm') 
+        ? 'video/webm' 
+        : MediaRecorder.isTypeSupported('video/mp4')
+        ? 'video/mp4'
+        : '';
+
+      if (!mimeType) {
+        alert('Video recording not supported in this browser');
+        return;
+      }
+
+      const recorder = new MediaRecorder(streamRef.current, { mimeType });
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
       };
 
-      setTakes([newTake, ...takes]);
-      setIsRecording(false);
-      setRecordingStartTime(null);
-      setRecordingDuration(0);
-      setRecordedPoseSequence([]);
-      setCurrentPose(0);
-    } else {
-      // Start recording
+      recorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        
+        // Convert blob to data URL for persistence
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          
+          const duration = Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000);
+          const now = new Date();
+          const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          
+          const newTake: Take = {
+            id: Date.now().toString(),
+            duration: duration,
+            lastMove: dancePoses[currentPose].name,
+            timestamp: timestamp,
+            createdAt: now.toLocaleString(),
+            poseSequence: recordedPoseSequence,
+            blobUrl: dataUrl, // Store as data URL for persistence
+          };
+
+          setTakes((prev) => [newTake, ...prev]);
+        };
+        reader.onerror = () => {
+          console.error('Failed to convert blob to data URL');
+          // Fallback: use blob URL (won't persist across reloads)
+          const blobUrl = URL.createObjectURL(blob);
+          const duration = Math.floor((Date.now() - (recordingStartTime || Date.now())) / 1000);
+          const now = new Date();
+          const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          
+          const newTake: Take = {
+            id: Date.now().toString(),
+            duration: duration,
+            lastMove: dancePoses[currentPose].name,
+            timestamp: timestamp,
+            createdAt: now.toLocaleString(),
+            poseSequence: recordedPoseSequence,
+            blobUrl: blobUrl,
+          };
+
+          setTakes((prev) => [newTake, ...prev]);
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start(100); // Collect data every 100ms
       setIsRecording(true);
       setIsPreviewPlaying(false);
       setRecordingStartTime(Date.now());
       setRecordingDuration(0);
-      setRecordedPoseSequence([0]); // Start with first pose
+      setRecordedPoseSequence([currentPose]);
       setReplayingTake(null);
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      alert('Failed to start recording');
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecordingStartTime(null);
+    setRecordingDuration(0);
+    setRecordedPoseSequence([]);
+    setCurrentPose(0);
+  };
+
+  const handleRecordToggle = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
     }
   };
 
   const handleDeleteTake = (takeId: string) => {
+    const take = takes.find(t => t.id === takeId);
+    if (take && take.blobUrl && !take.blobUrl.startsWith('data:')) {
+      // Only revoke blob URLs, not data URLs
+      URL.revokeObjectURL(take.blobUrl);
+    }
     setTakes(takes.filter(t => t.id !== takeId));
     if (selectedTake === takeId) {
       setSelectedTake(null);
@@ -151,11 +326,9 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
     if (isRecording || isPreviewPlaying) return;
     
     if (replayingTake === takeId) {
-      // Stop replay
       setReplayingTake(null);
       setCurrentPose(0);
     } else {
-      // Start replay
       setReplayingTake(takeId);
       setSelectedTake(takeId);
     }
@@ -175,7 +348,9 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
           <ArrowLeft className="w-6 h-6" />
         </button>
         <h2 className="text-white" style={{ fontSize: '18px' }}>Dance Mode</h2>
-        <div className="w-6" />
+        <button onClick={onViewTakes} className="text-white text-sm">
+          View Takes
+        </button>
       </div>
 
       {/* Camera Preview */}
@@ -187,16 +362,65 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
           }}
           transition={{ duration: 2, repeat: Infinity }}
         >
-          {/* Camera placeholder */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-gray-600" style={{ fontSize: '14px' }}>Camera Preview</p>
+          {/* Real Camera Video */}
+          <video
+            ref={videoRef}
+            className="absolute inset-0 w-full h-full object-cover"
+            playsInline
+            muted
+            style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)' }}
+          />
+
+          {/* Camera Error Message */}
+          {cameraError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#121212]">
+              <p className="text-gray-400 text-center px-4" style={{ fontSize: '14px' }}>
+                {cameraError}
+              </p>
+            </div>
+          )}
+
+          {/* Camera Toggle Button */}
+          <button
+            onClick={toggleCamera}
+            className="absolute top-3 right-3 z-10 w-10 h-10 rounded-full bg-black/70 hover:bg-black/90 flex items-center justify-center transition-colors"
+            title={`Switch to ${facingMode === 'user' ? 'rear' : 'front'} camera`}
+          >
+            <Camera className="w-5 h-5 text-white" />
+          </button>
+
+          {/* Move Description - Above Ghost Figure */}
+          <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-10">
+            <motion.div
+              className="px-5 py-2.5 rounded-full"
+              style={{
+                background: 'rgba(0, 0, 0, 0.85)',
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+              }}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              key={currentPose}
+            >
+              <p 
+                className="text-white text-center font-bold whitespace-nowrap"
+                style={{ 
+                  fontSize: '17px',
+                  fontWeight: 700,
+                  textShadow: '0 2px 8px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 245, 255, 0.3)',
+                  letterSpacing: '0.5px',
+                }}
+              >
+                {dancePoses[currentPose].name}
+              </p>
+            </motion.div>
           </div>
 
           {/* Ghost Dancer Overlay */}
           <AnimatePresence mode="wait">
             <motion.svg 
               key={currentPose}
-              className="absolute inset-0 w-full h-full opacity-40" 
+              className="absolute inset-0 w-full h-full opacity-40 pointer-events-none" 
               viewBox="0 0 300 350"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 0.4, scale: 1 }}
@@ -224,23 +448,11 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
                 <line x1="150" y1="200" x2={dancePoses[currentPose].legLeft.x2} y2={dancePoses[currentPose].legLeft.y2} stroke="#00F5FF" strokeWidth="2.5" />
                 <line x1="150" y1="200" x2={dancePoses[currentPose].legRight.x2} y2={dancePoses[currentPose].legRight.y2} stroke="#00F5FF" strokeWidth="2.5" />
               </motion.g>
-              
-              {/* Pose Label */}
-              <text 
-                x="150" 
-                y="250" 
-                textAnchor="middle" 
-                fill="#00F5FF" 
-                fontSize="14"
-                style={{ filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8))' }}
-              >
-                {dancePoses[currentPose].name}
-              </text>
             </motion.svg>
           </AnimatePresence>
 
           {/* Status overlay */}
-          <div className="absolute top-4 left-4 right-4">
+          <div className="absolute top-4 left-4 right-4 z-10">
             {isRecording ? (
               <motion.div 
                 className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
@@ -297,12 +509,12 @@ export default function DanceMode({ onBack, onPublish }: DanceModeProps) {
         </div>
       </div>
 
-      {/* Record Button - Moved down */}
+      {/* Record Button */}
       <div className="absolute top-[500px] left-0 right-0 px-6">
         <div className="flex flex-col items-center">
           <motion.button
             onClick={handleRecordToggle}
-            disabled={!!replayingTake}
+            disabled={!!replayingTake || !cameraActive}
             className="relative w-20 h-20 rounded-full bg-[#121212] flex items-center justify-center disabled:opacity-50"
             style={{
               border: `4px solid ${isRecording ? '#FF0050' : 'rgba(255, 0, 80, 0.5)'}`,
