@@ -1,72 +1,67 @@
 import { useState, useEffect, useRef } from 'react';
-
-export interface AudioTrack {
-  id: string;
-  name: string;
-  file: string;
-}
+import { Song } from '../utils/beatMaps';
 
 export function useAudioPlayer() {
-  const [currentTrack, setCurrentTrack] = useState<AudioTrack | null>(null);
+  const [currentTrack, setCurrentTrack] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize audio element
   useEffect(() => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.volume = volume;
-    }
+    if (!currentTrack) return;
 
-    const audio = audioRef.current;
+    const audio = new Audio(currentTrack.file);
+    audioRef.current = audio;
 
-    const updateTime = () => setCurrentTime(audio.currentTime);
-    const updateDuration = () => setDuration(audio.duration);
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setCurrentTime(0);
+    // Add comprehensive error handling for audio loading
+    const handleError = (e: Event) => {
+      console.error('Audio loading error:', e, 'File:', currentTrack.file);
+      console.error('Audio error details:', (audio as any).error);
     };
 
+    const handleCanPlay = () => {
+      console.log('Audio loaded successfully:', currentTrack.file);
+    };
+
+    audio.addEventListener('error', handleError);
+    audio.addEventListener('canplay', handleCanPlay);
+
+    // Preload audio
+    audio.preload = 'auto';
+    try {
+      const loadResult = audio.load();
+      // load() may not return a Promise in all browsers
+      if (loadResult && typeof loadResult.catch === 'function') {
+        loadResult.catch((error: any) => {
+          console.error('Failed to load audio:', error, 'File:', currentTrack.file);
+        });
+      }
+    } catch (error) {
+      console.error('Error calling audio.load():', error, 'File:', currentTrack.file);
+    }
+
+    const updateTime = () => setCurrentTime(audio.currentTime);
     audio.addEventListener('timeupdate', updateTime);
-    audio.addEventListener('loadedmetadata', updateDuration);
-    audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('ended', () => setIsPlaying(false));
 
     return () => {
       audio.removeEventListener('timeupdate', updateTime);
-      audio.removeEventListener('loadedmetadata', updateDuration);
-      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('ended', () => setIsPlaying(false));
+      audio.removeEventListener('error', handleError);
+      audio.removeEventListener('canplay', handleCanPlay);
+      audio.pause();
+      audio.src = '';
     };
-  }, []);
-
-  // Update volume
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume;
-    }
-  }, [volume]);
-
-  // Update track
-  useEffect(() => {
-    if (audioRef.current && currentTrack) {
-      audioRef.current.src = currentTrack.file;
-      audioRef.current.load();
-    }
   }, [currentTrack]);
 
-  const play = async (startTime?: number) => {
-    if (!audioRef.current || !currentTrack) return;
-
+  const play = async (startTime: number = 0) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = startTime;
     try {
-      if (startTime !== undefined) {
-        audioRef.current.currentTime = startTime;
-      }
       await audioRef.current.play();
       setIsPlaying(true);
     } catch (error) {
-      console.error('Error playing audio:', error);
+      console.error('Failed to play audio:', error);
     }
   };
 
@@ -77,44 +72,24 @@ export function useAudioPlayer() {
     }
   };
 
-  const stop = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      setIsPlaying(false);
-      setCurrentTime(0);
-    }
-  };
-
   const seek = (time: number) => {
     if (audioRef.current) {
       audioRef.current.currentTime = time;
-      setCurrentTime(time);
     }
   };
 
-  const setTrack = (track: AudioTrack) => {
-    stop();
-    setCurrentTrack(track);
-  };
-
-  // Get audio element for captureStream
   const getAudioElement = () => audioRef.current;
 
   return {
     currentTrack,
-    isPlaying,
-    volume,
-    currentTime,
-    duration,
+    setTrack: setCurrentTrack,
     play,
     pause,
-    stop,
     seek,
-    setTrack,
-    setVolume,
+    currentTime,
+    isPlaying,
     audioElement: audioRef.current,
-    getAudioElement, // Expose function to get audio element for captureStream
+    getAudioElement,
   };
 }
 

@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff, Music, VolumeX } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff, VolumeX } from 'lucide-react';
 import { Button } from './ui/button';
 import { Take } from './PublishedTakes';
+import ReplayView from './ReplayView';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useBeatSync } from '../hooks/useBeatSync';
 import MusicSelector from './MusicSelector';
 import AnimatedGhost, { getChoreographyPattern } from './AnimatedGhost';
-import AISuggestions from './AISuggestions';
-import { generateAISuggestions } from '../utils/aiSuggestions';
 import { availableSongs } from '../utils/beatMaps';
 
 interface DanceModeProps {
@@ -77,22 +76,12 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [selectedTake, setSelectedTake] = useState<string | null>(null);
-  const [replayingTake, setReplayingTake] = useState<string | null>(null);
   const [recordedPoseSequence, setRecordedPoseSequence] = useState<number[]>([]);
-  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [musicMuted, setMusicMuted] = useState(false);
+  const [showReplayView, setShowReplayView] = useState(false);
+  const [replayTake, setReplayTake] = useState<Take | null>(null);
   const [beatActive, setBeatActive] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
-  const [showAISuggestions, setShowAISuggestions] = useState(false);
   
-  // Camera state
-  const [facingMode, setFacingMode] = useState<FacingMode>('user');
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-
   // Audio player
   const audioPlayer = useAudioPlayer();
   
@@ -117,14 +106,14 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
+  
   // Save track selection
   useEffect(() => {
     if (audioPlayer.currentTrack) {
       sessionStorage.setItem('selectedTrack', audioPlayer.currentTrack.id);
     }
   }, [audioPlayer.currentTrack]);
-
+  
   // Beat sync - switch pose on beat using song-specific choreography
   useBeatSync({
     currentTime: audioPlayer.currentTime,
@@ -152,6 +141,16 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
       setCurrentPose(0); // Reset to first pose when song changes
     }
   }, [audioPlayer.currentTrack]);
+  
+  // Camera state
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const finalDurationRef = useRef<number>(0);
 
   // Initialize camera
   useEffect(() => {
@@ -204,14 +203,14 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
 
   // Preview animation loop
   useEffect(() => {
-    if (!isPreviewPlaying || isRecording || replayingTake) return;
+    if (!isPreviewPlaying || isRecording || showReplayView) return;
     
     const interval = setInterval(() => {
       setCurrentPose((prev) => (prev + 1) % dancePoses.length);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPreviewPlaying, isRecording, replayingTake]);
+  }, [isPreviewPlaying, isRecording, showReplayView]);
 
   // Recording animation loop
   useEffect(() => {
@@ -236,68 +235,56 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
       if (recordingStartTime) {
         const duration = Math.floor((Date.now() - recordingStartTime) / 1000);
         setRecordingDuration(duration);
+        finalDurationRef.current = duration; // Store in ref for use in onstop
       }
     }, 100);
 
     return () => clearInterval(interval);
   }, [isRecording, recordingStartTime]);
   
-  // Store duration in ref for use in onstop callback
-  const recordingDurationRef = useRef(0);
+  // Ensure camera video is visible after recording stops
   useEffect(() => {
-    recordingDurationRef.current = recordingDuration;
-  }, [recordingDuration]);
-
-  // Replay functionality
-  useEffect(() => {
-    if (!replayingTake) return;
-
-    const take = takes.find(t => t.id === replayingTake);
-    if (!take) return;
-
-    let poseIndex = 0;
-    const interval = setInterval(() => {
-      if (poseIndex < take.poseSequence.length) {
-        setCurrentPose(take.poseSequence[poseIndex]);
-        poseIndex++;
-      } else {
-        setReplayingTake(null);
-        setCurrentPose(0);
+    if (!isRecording && streamRef.current && videoRef.current) {
+      // Reattach stream to video element
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
       }
-    }, 1000);
+      videoRef.current.play().catch(console.error);
+    }
+  }, [isRecording]);
 
-    return () => clearInterval(interval);
-  }, [replayingTake, takes]);
+  // Old replay functionality removed - now using ReplayView component
 
   const handlePreviewToggle = () => {
     if (isRecording) return;
-    // Hide AI suggestions when starting preview
-    setShowAISuggestions(false);
     setIsPreviewPlaying(!isPreviewPlaying);
     if (isPreviewPlaying) {
       setCurrentPose(0);
-      if (musicEnabled && audioPlayer.currentTrack) {
+      if (!musicMuted && audioPlayer.currentTrack) {
         audioPlayer.pause();
       }
     } else {
-      if (musicEnabled && audioPlayer.currentTrack) {
+      // Ensure camera is visible when starting preview
+      if (streamRef.current && videoRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.play().catch(console.error);
+      } else if (!cameraActive) {
+        startCamera();
+      }
+      if (!musicMuted && audioPlayer.currentTrack) {
         audioPlayer.play();
       }
-    }
-  };
-
-  const handleMusicToggle = () => {
-    setMusicEnabled(!musicEnabled);
-    if (!musicEnabled) {
-      if (audioPlayer.currentTrack) {
-        audioPlayer.play();
-      }
-    } else {
-      audioPlayer.pause();
     }
   };
 
   const startRecording = async () => {
+    // Ensure camera stream is active before recording
+    if (!streamRef.current || !cameraActive) {
+      await startCamera();
+      // Wait a bit for camera to initialize
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
     if (!streamRef.current) {
       alert('Camera not available. Please enable camera access.');
       return;
@@ -316,10 +303,16 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         return;
       }
 
-      // Combine camera stream with BGM audio stream
+      // Ensure video element is showing the stream
+      if (videoRef.current && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.play().catch(console.error);
+      }
+
+      // Combine camera video stream with BGM audio stream if music is enabled and track is selected
       let combinedStream = streamRef.current;
       
-      if (musicEnabled && audioPlayer.currentTrack) {
+      if (!musicMuted && audioPlayer.currentTrack) {
         const audioElement = audioPlayer.getAudioElement();
         if (audioElement) {
           try {
@@ -330,19 +323,23 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
               ? (audioElement as any).mozCaptureStream()
               : null;
 
-            if (audioStream) {
+            if (audioStream && audioStream.getAudioTracks().length > 0) {
               // Create combined stream with video from camera and audio from BGM
               combinedStream = new MediaStream([
                 ...streamRef.current.getVideoTracks(),
                 ...audioStream.getAudioTracks(),
               ]);
+              console.log('Combined video and audio streams for recording');
             } else {
-              console.warn('captureStream not available, recording video only');
+              console.warn('No audio tracks available from captureStream, recording video only');
             }
           } catch (error) {
             console.warn('Failed to capture audio stream:', error);
+            // Continue with video-only recording
           }
         }
+      } else {
+        console.log('No music selected or muted, recording video only');
       }
 
       const recorder = new MediaRecorder(combinedStream, { mimeType });
@@ -354,27 +351,17 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         }
       };
 
-      // Capture start time and sequence for use in onstop callback
-      const startTimeForCallback = Date.now();
-      const sequenceForCallback = [currentPose];
-      
       recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
         
-        // Calculate duration - use the ref value which captures the latest duration
-        const calculatedDuration = recordingDurationRef.current > 0 
-          ? recordingDurationRef.current 
-          : Math.max(1, Math.floor((Date.now() - startTimeForCallback) / 1000));
+        // Use the ref value which captures the latest duration before state reset
+        // Fallback to calculated duration if ref is 0
+        const finalDuration = finalDurationRef.current > 0 
+          ? finalDurationRef.current 
+          : (recordingStartTime ? Math.floor((Date.now() - recordingStartTime) / 1000) : 1);
         
-        // Generate AI suggestions
-        const suggestions = generateAISuggestions({
-          duration: calculatedDuration,
-          poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
-          lastMove: getCurrentPoseName(),
-          songId: audioPlayer.currentTrack?.id,
-        });
-        setAiSuggestions(suggestions);
-        setShowAISuggestions(true);
+        // Reset ref for next recording
+        finalDurationRef.current = 0;
         
         // Convert blob to data URL for persistence
         const reader = new FileReader();
@@ -386,11 +373,11 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           
           const newTake: Take = {
             id: Date.now().toString(),
-            duration: calculatedDuration,
+            duration: finalDuration,
             lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
-            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
+            poseSequence: recordedPoseSequence,
             blobUrl: dataUrl, // Store as data URL for persistence
           };
 
@@ -403,23 +390,13 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           const now = new Date();
           const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           
-          // Generate AI suggestions for fallback too
-          const suggestions = generateAISuggestions({
-            duration: calculatedDuration,
-            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
-            lastMove: getCurrentPoseName(),
-            songId: audioPlayer.currentTrack?.id,
-          });
-          setAiSuggestions(suggestions);
-          setShowAISuggestions(true);
-          
           const newTake: Take = {
             id: Date.now().toString(),
-            duration: calculatedDuration,
+            duration: finalDuration,
             lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
-            poseSequence: recordedPoseSequence.length > 0 ? recordedPoseSequence : sequenceForCallback,
+            poseSequence: recordedPoseSequence,
             blobUrl: blobUrl,
           };
 
@@ -428,23 +405,25 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         reader.readAsDataURL(blob);
       };
 
-      // Hide AI suggestions when starting recording
-      setShowAISuggestions(false);
-      
-      // Start BGM and recording in sync
-      if (musicEnabled && audioPlayer.currentTrack) {
-        audioPlayer.seek(0); // Reset to beginning
-        await audioPlayer.play(0); // Start playback
-      }
-      
-      // Start recording immediately after BGM starts
-      recorder.start(100); // Collect data every 100ms
-      setIsRecording(true);
-      setIsPreviewPlaying(false);
-      setRecordingStartTime(Date.now());
-      setRecordingDuration(0);
-      setRecordedPoseSequence([currentPose]);
-      setReplayingTake(null);
+        // Start BGM and recording in sync
+        if (!musicMuted && audioPlayer.currentTrack) {
+          audioPlayer.seek(0); // Reset to beginning
+          // Small delay to ensure audio stream is ready
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await audioPlayer.play(0); // Start playback
+          // Small delay to ensure audio is playing before recording starts
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        // Start recording immediately after BGM starts (or immediately if no music)
+        recorder.start(100); // Collect data every 100ms
+        setIsRecording(true);
+        setIsPreviewPlaying(false);
+        const startTime = Date.now();
+        setRecordingStartTime(startTime);
+        setRecordingDuration(0);
+        finalDurationRef.current = 0; // Reset ref
+        setRecordedPoseSequence([currentPose]);
     } catch (error) {
       console.error('Error starting recording:', error);
       alert('Failed to start recording');
@@ -452,9 +431,6 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   };
 
   const stopRecording = () => {
-    // Capture duration before stopping (recordingDuration state has the current value)
-    const finalDuration = recordingDuration;
-    
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       recorderRef.current.stop();
     }
@@ -465,8 +441,17 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     setCurrentPose(0);
     
     // Pause music when recording stops
-    if (musicEnabled && audioPlayer.currentTrack) {
+    if (!musicMuted && audioPlayer.currentTrack) {
       audioPlayer.pause();
+    }
+    
+    // Ensure camera stream is still active and visible
+    if (streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(console.error);
+    } else if (!cameraActive) {
+      // Restart camera if it was stopped
+      startCamera();
     }
   };
 
@@ -488,20 +473,32 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     if (selectedTake === takeId) {
       setSelectedTake(null);
     }
-    if (replayingTake === takeId) {
-      setReplayingTake(null);
+    if (replayTake?.id === takeId) {
+      setReplayTake(null);
+      setShowReplayView(false);
     }
   };
 
   const handleReplayTake = (takeId: string) => {
     if (isRecording || isPreviewPlaying) return;
     
-    if (replayingTake === takeId) {
-      setReplayingTake(null);
-      setCurrentPose(0);
-    } else {
-      setReplayingTake(takeId);
-      setSelectedTake(takeId);
+    const take = takes.find(t => t.id === takeId);
+    if (take) {
+      setReplayTake(take);
+      setShowReplayView(true);
+    }
+  };
+
+  const handleCloseReplay = () => {
+    setShowReplayView(false);
+    setReplayTake(null);
+  };
+
+  const handleDeleteFromReplay = () => {
+    if (replayTake) {
+      handleDeleteTake(replayTake.id);
+      setShowReplayView(false);
+      setReplayTake(null);
     }
   };
 
@@ -510,6 +507,20 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Show replay view if active
+  if (showReplayView && replayTake) {
+    return (
+      <div className="relative w-full h-full bg-black">
+        <ReplayView
+          take={replayTake}
+          onClose={handleCloseReplay}
+          onDelete={handleDeleteFromReplay}
+          onPublish={onPublish}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-full bg-black">
@@ -525,17 +536,49 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
             onSelectTrack={audioPlayer.setTrack}
           />
           <motion.button
-            onClick={handleMusicToggle}
+            onClick={() => {
+              setMusicMuted(!musicMuted);
+              if (!musicMuted) {
+                audioPlayer.pause();
+              } else {
+                if (audioPlayer.currentTrack) {
+                  audioPlayer.play();
+                }
+              }
+            }}
             whileTap={{ scale: 0.9 }}
-            className="p-2 rounded-lg bg-[#121212] border-2 border-gray-700 hover:border-[#FF0050] transition-colors"
-            title={musicEnabled ? 'Disable Music' : 'Enable Music'}
+            className="rounded-lg bg-[#121212] border-2 border-gray-700 hover:border-[#FF0050] transition-colors flex items-center justify-center"
+            style={{
+              width: '44px',
+              height: '44px',
+              minWidth: '44px',
+              minHeight: '44px',
+            }}
+            title={musicMuted ? 'Unmute Music' : 'Mute Music'}
           >
-            {musicEnabled ? (
-              <Music className="w-5 h-5 text-[#FF0050]" />
+            {musicMuted ? (
+              <VolumeX 
+                className="text-[#FF0050]" 
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  strokeWidth: 2.5,
+                }}
+              />
             ) : (
-              <VolumeX className="w-5 h-5 text-gray-500" />
+              <Volume2 
+                className="text-white" 
+                style={{
+                  width: '24px',
+                  height: '24px',
+                  strokeWidth: 2.5,
+                }}
+              />
             )}
           </motion.button>
+          <button onClick={onViewTakes} className="text-white text-sm">
+            View Takes
+          </button>
         </div>
       </div>
 
@@ -544,7 +587,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         <motion.div
           className="relative w-full h-full bg-[#121212] rounded-2xl overflow-hidden border-2"
           animate={{
-            borderColor: isRecording ? ['#FF0050', '#00F5FF', '#FF0050'] : replayingTake ? '#00F5FF' : '#1f2937',
+            borderColor: isRecording ? ['#FF0050', '#00F5FF', '#FF0050'] : '#1f2937',
           }}
           transition={{ duration: 2, repeat: Infinity }}
         >
@@ -554,6 +597,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
             className="absolute inset-0 w-full h-full object-cover"
             playsInline
             muted
+            autoPlay
             style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)' }}
           />
 
@@ -602,45 +646,11 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
             </motion.div>
           </div>
 
-          {/* Status overlay - with solid background to cover any ghost overflow */}
-          <div className="absolute top-0 left-0 right-0 z-20 pb-2">
-            <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-[#121212] to-transparent pointer-events-none" />
-            <div className="relative top-4 left-4 right-4">
-              {isRecording ? (
-                <motion.div 
-                  className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
-                  animate={{ opacity: [1, 0.7, 1] }}
-                  transition={{ duration: 1, repeat: Infinity }}
-                >
-                  <div className="w-2 h-2 bg-white rounded-full" />
-                  <p className="text-white" style={{ fontSize: '14px' }}>Recording: {formatDuration(recordingDuration)}</p>
-                </motion.div>
-              ) : replayingTake ? (
-                <motion.div 
-                  className="bg-[#00F5FF]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
-                  animate={{ opacity: [1, 0.8, 1] }}
-                  transition={{ duration: 1, repeat: Infinity }}
-                >
-                  <Volume2 className="w-4 h-4 text-black" />
-                  <p className="text-black" style={{ fontSize: '14px' }}>Replaying Take</p>
-                </motion.div>
-              ) : isPreviewPlaying ? (
-                <div className="bg-[#00F5FF]/90 rounded-lg px-4 py-2">
-                  <p className="text-black text-center" style={{ fontSize: '14px' }}>Preview Playing</p>
-                </div>
-              ) : (
-                <div className="bg-black/70 rounded-lg px-4 py-2">
-                  <p className="text-white text-center" style={{ fontSize: '14px' }}>Ready to Preview or Record</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Ghost Dancer Overlay - clipped to not show above banner */}
+          {/* Ghost Dancer Overlay */}
           <AnimatePresence mode="wait">
             <motion.div
               key={`ghost-${currentPose}`}
-              className="absolute inset-0 w-full h-full pointer-events-none"
+              className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden"
               style={{
                 clipPath: 'inset(60px 0 0 0)', // Clip top 60px to hide anything above status banner
               }}
@@ -657,13 +667,35 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
               />
             </motion.div>
           </AnimatePresence>
+
+          {/* Status overlay */}
+          <div className="absolute top-4 left-4 right-4 z-10">
+            {isRecording ? (
+              <motion.div 
+                className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"
+                animate={{ opacity: [1, 0.7, 1] }}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
+                <div className="w-2 h-2 bg-white rounded-full" />
+                <p className="text-white" style={{ fontSize: '14px' }}>Recording: {formatDuration(recordingDuration)}</p>
+              </motion.div>
+            ) : isPreviewPlaying ? (
+              <div className="bg-[#00F5FF]/90 rounded-lg px-4 py-2">
+                <p className="text-black text-center" style={{ fontSize: '14px' }}>Preview Playing</p>
+              </div>
+            ) : (
+              <div className="bg-black/70 rounded-lg px-4 py-2">
+                <p className="text-white text-center" style={{ fontSize: '14px' }}>Ready to Preview or Record</p>
+              </div>
+            )}
+          </div>
         </motion.div>
 
         {/* Preview/Stop Controls */}
         <div className="flex items-center justify-center space-x-3 mt-4">
           <motion.button
             onClick={handlePreviewToggle}
-            disabled={isRecording || !!replayingTake}
+            disabled={isRecording || showReplayView}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#121212] border-2 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               borderColor: isPreviewPlaying ? '#00F5FF' : '#1f2937',
@@ -690,7 +722,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         <div className="flex flex-col items-center">
           <motion.button
             onClick={handleRecordToggle}
-            disabled={!!replayingTake || !cameraActive}
+            disabled={showReplayView || !cameraActive}
             className="relative w-20 h-20 rounded-full bg-[#121212] flex items-center justify-center disabled:opacity-50"
             style={{
               border: `4px solid ${isRecording ? '#FF0050' : 'rgba(255, 0, 80, 0.5)'}`,
@@ -742,7 +774,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
                 exit={{ opacity: 0, x: -20 }}
                 className="bg-[#121212] rounded-xl p-3 border-2"
                 style={{
-                  borderColor: replayingTake === take.id ? '#00F5FF' : selectedTake === take.id ? '#00F5FF' : '#1f2937',
+                  borderColor: selectedTake === take.id ? '#00F5FF' : '#1f2937',
                 }}
               >
                 <div className="flex items-center justify-between">
@@ -765,7 +797,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
                       className="p-2 rounded-lg bg-[#00F5FF]/20 hover:bg-[#00F5FF]/30 transition-colors disabled:opacity-50"
                       whileTap={{ scale: 0.9 }}
                     >
-                      {replayingTake === take.id ? (
+                      {showReplayView && replayTake?.id === take.id ? (
                         <Square className="w-4 h-4" style={{ color: '#00F5FF' }} />
                       ) : (
                         <RotateCcw className="w-4 h-4" style={{ color: '#00F5FF' }} />
@@ -805,14 +837,6 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           </Button>
         </motion.div>
       </div>
-
-      {/* AI Suggestions */}
-      {showAISuggestions && (
-        <AISuggestions
-          suggestions={aiSuggestions}
-          onClose={() => setShowAISuggestions(false)}
-        />
-      )}
     </div>
   );
 }

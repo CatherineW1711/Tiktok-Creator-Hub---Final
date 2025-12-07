@@ -4,16 +4,11 @@ import LoginScreen from './components/LoginScreen';
 import DanceMode from './components/DanceMode';
 import PublishSuccess from './components/PublishSuccess';
 import PublishedTakes, { Take } from './components/PublishedTakes';
-import TrainingMode from './screens/TrainingMode';
-import PoseCompareMode from './screens/PoseCompareMode';
-import ModeBottomNav from './components/ModeBottomNav';
 
-export type Screen = 'login' | 'dance' | 'publishSuccess' | 'publishedTakes' | 'training' | 'poseCompare';
-export type Mode = 'dance' | 'train' | 'compare' | 'takes';
+export type Screen = 'login' | 'dance' | 'publishSuccess' | 'publishedTakes';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
-  const [currentMode, setCurrentMode] = useState<Mode>('dance');
   
   // Initialize takes from localStorage
   const [takes, setTakes] = useState<Take[]>(() => {
@@ -51,30 +46,9 @@ export default function App() {
     setCurrentScreen(screen);
   };
 
-  const handleModeChange = (mode: Mode) => {
-    setCurrentMode(mode);
-    switch (mode) {
-      case 'dance':
-        setCurrentScreen('dance');
-        break;
-      case 'train':
-        setCurrentScreen('training');
-        break;
-      case 'compare':
-        setCurrentScreen('poseCompare');
-        break;
-      case 'takes':
-        setCurrentScreen('publishedTakes');
-        break;
-    }
-  };
-
   const handleDeleteTake = (takeId: string) => {
     setTakes((prev) => prev.filter((t) => t.id !== takeId));
   };
-
-  // Show bottom nav on main screens (not login or publishSuccess)
-  const showBottomNav = !['login', 'publishSuccess'].includes(currentScreen);
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4">
@@ -114,24 +88,8 @@ export default function App() {
                 onDeleteTake={handleDeleteTake}
               />
             )}
-            {currentScreen === 'training' && (
-              <TrainingMode
-                onBack={() => navigateTo('login')}
-                takes={takes}
-                setTakes={setTakes}
-              />
-            )}
-            {currentScreen === 'poseCompare' && (
-              <PoseCompareMode onBack={() => navigateTo('login')} />
-            )}
           </motion.div>
         </AnimatePresence>
-        {showBottomNav && (
-          <ModeBottomNav
-            currentMode={currentMode}
-            onModeChange={handleModeChange}
-          />
-        )}
       </div>
     </div>
   );

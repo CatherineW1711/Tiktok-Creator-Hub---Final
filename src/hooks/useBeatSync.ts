@@ -1,48 +1,31 @@
 import { useEffect, useRef } from 'react';
-import { getBeatMap } from '../utils/beatMaps';
+import { beatMaps } from '../utils/beatMaps';
 
-interface UseBeatSyncOptions {
+interface UseBeatSyncProps {
   currentTime: number;
   songId: string | null;
   onBeat: () => void;
-  threshold?: number; // seconds - how close to beat to trigger
 }
 
-export function useBeatSync({
-  currentTime,
-  songId,
-  onBeat,
-  threshold = 0.15,
-}: UseBeatSyncOptions) {
+export function useBeatSync({ currentTime, songId, onBeat }: UseBeatSyncProps) {
   const lastBeatRef = useRef<number>(-1);
-  const beatMapRef = useRef<number[]>([]);
 
   useEffect(() => {
-    if (songId) {
-      beatMapRef.current = getBeatMap(songId);
-      lastBeatRef.current = -1;
+    if (!songId) return;
+
+    const beats = beatMaps[songId] || [];
+    if (beats.length === 0) return;
+
+    // Find the current beat index
+    const currentBeatIndex = beats.findIndex((beat, index) => {
+      const nextBeat = beats[index + 1];
+      return currentTime >= beat && (nextBeat === undefined || currentTime < nextBeat);
+    });
+
+    if (currentBeatIndex !== -1 && currentBeatIndex !== lastBeatRef.current) {
+      lastBeatRef.current = currentBeatIndex;
+      onBeat();
     }
-  }, [songId]);
-
-  useEffect(() => {
-    if (!songId || beatMapRef.current.length === 0) return;
-
-    const beats = beatMapRef.current;
-    const nextBeatIndex = beats.findIndex((beat) => beat > currentTime);
-
-    if (nextBeatIndex === -1) return; // No more beats
-
-    const nextBeat = beats[nextBeatIndex];
-    const timeToBeat = nextBeat - currentTime;
-
-    // Check if we're close enough to the beat
-    if (timeToBeat >= 0 && timeToBeat <= threshold) {
-      // Only trigger if we haven't already triggered for this beat
-      if (lastBeatRef.current !== nextBeatIndex) {
-        lastBeatRef.current = nextBeatIndex;
-        onBeat();
-      }
-    }
-  }, [currentTime, songId, onBeat, threshold]);
+  }, [currentTime, songId, onBeat]);
 }
 

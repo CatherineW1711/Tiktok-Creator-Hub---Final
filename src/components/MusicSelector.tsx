@@ -1,51 +1,68 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Music2, Check } from 'lucide-react';
-import { availableSongs, AudioTrack } from '../utils/beatMaps';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Music, ChevronDown } from 'lucide-react';
+import { Song, availableSongs } from '../utils/beatMaps';
 
 interface MusicSelectorProps {
-  currentTrack: AudioTrack | null;
-  onSelectTrack: (track: AudioTrack) => void;
+  currentTrack: Song | null;
+  onSelectTrack: (track: Song) => void;
 }
 
 export default function MusicSelector({ currentTrack, onSelectTrack }: MusicSelectorProps) {
-  const [open, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <motion.button
-          whileTap={{ scale: 0.95 }}
-          className="px-4 py-2 rounded-xl bg-[#121212] border-2 border-gray-700 hover:border-[#FF0050] transition-colors flex items-center space-x-2"
-        >
-          <Music2 className="w-4 h-4 text-white" />
-          <span className="text-white text-sm">
-            {currentTrack ? currentTrack.name : 'Choose Music'}
-          </span>
-        </motion.button>
-      </PopoverTrigger>
-      <PopoverContent className="w-64 bg-[#121212] border-gray-800 p-2">
-        <div className="space-y-1">
-          {availableSongs.map((song) => (
-            <motion.button
-              key={song.id}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                onSelectTrack(song);
-                setOpen(false);
-              }}
-              className="w-full px-3 py-2 rounded-lg hover:bg-[#1a1a1a] transition-colors flex items-center justify-between"
+    <div className="relative">
+      <motion.button
+        onClick={() => setIsOpen(!isOpen)}
+        whileTap={{ scale: 0.95 }}
+        className="flex items-center space-x-2 px-3 py-2 rounded-lg bg-[#121212] border-2 border-gray-700 hover:border-[#00F5FF] transition-colors"
+        style={{ minWidth: '120px' }}
+      >
+        <Music className="w-4 h-4 text-[#00F5FF]" />
+        <span className="text-white text-sm font-medium">
+          {currentTrack?.name || 'Select'}
+        </span>
+        <ChevronDown 
+          className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </motion.button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            <div 
+              className="fixed inset-0 z-40" 
+              onClick={() => setIsOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="absolute top-full left-0 mt-2 z-50 bg-[#121212] border-2 border-gray-700 rounded-lg overflow-hidden min-w-[160px]"
             >
-              <span className="text-white text-sm">{song.name}</span>
-              {currentTrack?.id === song.id && (
-                <Check className="w-4 h-4 text-[#00F5FF]" />
-              )}
-            </motion.button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+              {availableSongs.map((song) => (
+                <button
+                  key={song.id}
+                  onClick={() => {
+                    onSelectTrack(song);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full px-4 py-3 text-left hover:bg-[#1a1a1a] transition-colors ${
+                    currentTrack?.id === song.id ? 'bg-[#00F5FF]/20 text-[#00F5FF]' : 'text-white'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <Music className="w-4 h-4" />
+                    <span className="text-sm font-medium">{song.name}</span>
+                  </div>
+                </button>
+              ))}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
