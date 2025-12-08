@@ -114,7 +114,7 @@ export default function LoginScreen({ onLogin, onViewTakes }: LoginScreenProps) 
                 fontSize: '18px',
                 fontWeight: 500,
               }}
-            >
+                >
               View Published Takes
             </Button>
           </motion.div>

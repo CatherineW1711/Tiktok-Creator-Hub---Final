@@ -788,6 +788,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
             <DropdownMenuContent 
               align="end"
               className="bg-[#1a1a1a] border-gray-700 min-w-[120px]"
+              style={{ zIndex: 9999 }}
             >
               <DropdownMenuItem
                 onClick={() => setDifficulty('easy')}
@@ -912,8 +913,17 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
             </motion.div>
           </AnimatePresence>
 
+          {/* Difficulty Label - Above status overlay */}
+          <div className="absolute top-2 left-4 z-5">
+            <div className="bg-black/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-700">
+              <p className="text-white text-xs font-medium">
+                Mode: <span className="text-[#00F5FF] capitalize">{difficulty}</span>
+              </p>
+            </div>
+          </div>
+
           {/* Status overlay */}
-          <div className="absolute top-4 left-4 right-4 z-10">
+          <div className="absolute top-12 left-4 right-4 z-5">
             {isRecording ? (
               <motion.div 
                 className="bg-[#FF0050]/90 rounded-lg px-4 py-2 flex items-center justify-center space-x-2"

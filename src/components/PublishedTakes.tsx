@@ -158,28 +158,29 @@ export default function PublishedTakes({ takes, onBack, onDeleteTake }: Publishe
                       {formatDuration(videoDurations[take.id] || take.duration)}
                     </p>
                   </div>
-                  
-                  {/* Music Label - Top Left (moved up to avoid overlap) */}
-                  {take.songName && (
-                    <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md rounded px-2 py-1 flex items-center space-x-1.5 z-10 max-w-[calc(100%-80px)]">
-                      <Music className="w-3 h-3 text-[#00F5FF] flex-shrink-0" />
-                      <p className="text-white text-xs font-medium truncate">
-                        {take.songName}
-                      </p>
-                    </div>
-                  )}
                 </div>
                 
-                {/* Take Info - Clean vertical layout */}
-                <div className="p-3 space-y-1.5">
-                  <p className="text-white text-sm font-medium truncate">{take.lastMove}</p>
-                  <p className="text-gray-400 text-xs">{take.timestamp}</p>
-                  {take.songName && (
-                    <div className="flex items-center space-x-1.5 pt-0.5">
-                      <Music className="w-3 h-3 text-[#00F5FF] flex-shrink-0" />
-                      <p className="text-[#00F5FF] text-xs truncate">{take.songName}</p>
-                    </div>
-                  )}
+                {/* Take Info - Minimal metadata only */}
+                <div className="p-3">
+                  {/* Music Name - First line */}
+                  <div className="mb-4 min-h-[20px] flex items-center" style={{ lineHeight: '1.5' }}>
+                    {take.songName ? (
+                      <div className="flex items-center space-x-1.5 flex-1 min-w-0">
+                        <Music className="w-3.5 h-3.5 text-[#00F5FF] flex-shrink-0" />
+                        <p className="text-white text-xs font-medium truncate" style={{ lineHeight: '1.5' }}>{take.songName}</p>
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-1.5 flex-1 min-w-0">
+                        <Music className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                        <p className="text-gray-500 text-xs" style={{ lineHeight: '1.5' }}>No music</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Timestamp - Second line */}
+                  <div className="min-h-[20px] flex items-center" style={{ lineHeight: '1.5' }}>
+                    <p className="text-gray-400 text-xs" style={{ lineHeight: '1.5' }}>{take.timestamp}</p>
+                  </div>
                   
                   {/* Delete Button */}
                   <div className="pt-2 mt-2 border-t border-gray-800">
@@ -269,19 +270,23 @@ export default function PublishedTakes({ takes, onBack, onDeleteTake }: Publishe
                 </div>
               </div>
 
-              {/* Video Info */}
-              <div className="mt-4 text-center">
-                <p className="text-white text-lg mb-1">{selectedTake.lastMove}</p>
-                <p className="text-gray-400 text-sm">{selectedTake.timestamp}</p>
-                {selectedTake.songName && (
-                  <div className="flex items-center justify-center space-x-2 mt-2 mb-1">
+              {/* Video Info - Minimal metadata */}
+              <div className="mt-4 text-center space-y-2.5">
+                {/* Music Name */}
+                {selectedTake.songName ? (
+                  <div className="flex items-center justify-center space-x-1.5">
                     <Music className="w-4 h-4 text-[#00F5FF]" />
-                    <p className="text-[#00F5FF] text-sm font-medium">{selectedTake.songName}</p>
+                    <p className="text-white text-sm font-medium">{selectedTake.songName}</p>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center space-x-1.5">
+                    <Music className="w-4 h-4 text-gray-500" />
+                    <p className="text-gray-500 text-sm">No music</p>
                   </div>
                 )}
-                <p className="text-gray-500 text-xs mt-1">
-                  Duration: {formatDuration(duration || videoDurations[selectedTake.id] || selectedTake.duration)}
-                </p>
+                
+                {/* Timestamp */}
+                <p className="text-gray-400 text-xs">{selectedTake.timestamp}</p>
               </div>
             </motion.div>
           </motion.div>
