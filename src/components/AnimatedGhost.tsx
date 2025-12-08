@@ -1,10 +1,13 @@
 import { motion } from 'motion/react';
 import { choreographyPatterns } from '../utils/choreography';
 
+type DifficultyLevel = 'easy' | 'medium' | 'hard';
+
 interface AnimatedGhostProps {
   poseName: string;
   beatActive?: boolean;
   songId?: string;
+  difficulty?: DifficultyLevel;
   className?: string;
 }
 
@@ -337,17 +340,157 @@ export default function AnimatedGhost({
   poseName, 
   beatActive = false, 
   songId,
+  difficulty = 'medium',
   className = '' 
 }: AnimatedGhostProps) {
   const config = poseConfigs[poseName] || poseConfigs['Neutral'];
   
-  const bodyX = config.bodyX || 0;
-  const bodyY = config.bodyY || 0;
-  const bodyRotation = config.bodyRotation || 0;
+  // Get movement range multiplier based on difficulty
+  // Easy: reduce movement range significantly (50% of original)
+  // Medium: moderate movement range (85% of original)
+  // Hard: enhanced movement range (120% of original) - maximum range for challenge
+  const getMovementRangeMultiplier = () => {
+    switch (difficulty) {
+      case 'easy':
+        return 0.5; // Significantly reduced range for beginners
+      case 'medium':
+        return 0.85; // Moderate range
+      case 'hard':
+        return 1.2; // Enhanced range (120%) - maximum movement for maximum challenge
+      default:
+        return 1.0;
+    }
+  };
 
-  // Glow intensity
-  const glowIntensity = beatActive ? 1.8 : 1;
-  const strokeWidth = beatActive ? 4 : 3;
+  const movementRangeMultiplier = getMovementRangeMultiplier();
+  
+  // Apply movement range reduction for Easy/Medium modes
+  // But ensure movements are still clearly visible - minimum thresholds
+  const baseBodyX = (config.bodyX || 0) * movementRangeMultiplier;
+  const baseBodyY = (config.bodyY || 0) * movementRangeMultiplier;
+  const baseBodyRotation = (config.bodyRotation || 0) * movementRangeMultiplier;
+  
+  // Ensure minimum movement for visibility (even in Easy mode)
+  const bodyX = Math.abs(baseBodyX) < 2 && baseBodyX !== 0 ? (baseBodyX > 0 ? 3 : -3) : baseBodyX;
+  const bodyY = Math.abs(baseBodyY) < 2 && baseBodyY !== 0 ? (baseBodyY > 0 ? 3 : -3) : baseBodyY;
+  const bodyRotation = Math.abs(baseBodyRotation) < 2 && baseBodyRotation !== 0 ? (baseBodyRotation > 0 ? 3 : -3) : baseBodyRotation;
+
+  // Get animation speed multiplier based on difficulty - increased contrast
+  const getSpeedMultiplier = () => {
+    switch (difficulty) {
+      case 'easy':
+        return 0.5; // Significantly slower (50% speed) for beginners
+      case 'medium':
+        return 0.85; // Slightly faster than Easy, moderate pace
+      case 'hard':
+        return 2.0; // Very fast and challenging (200% speed) - maximum difficulty
+      default:
+        return 1.0;
+    }
+  };
+
+  const speedMultiplier = getSpeedMultiplier();
+
+  // Reduce arm/leg extension for Easy mode (simpler movements)
+  // But ensure movements are still clearly visible
+  // Hard mode: enhanced extension for maximum challenge
+  const getLimbRangeMultiplier = () => {
+    switch (difficulty) {
+      case 'easy':
+        return 0.75; // Reduced to 75% to ensure movements are still clearly visible
+      case 'medium':
+        return 0.9; // 90% for moderate challenge
+      case 'hard':
+        return 1.15; // Enhanced to 115% - maximum limb extension for maximum challenge
+      default:
+        return 1.0;
+    }
+  };
+
+  const limbRangeMultiplier = getLimbRangeMultiplier();
+
+  // Apply limb range adjustment for all modes
+  // Easy/Medium: reduce range, Hard: enhance range
+  // Calculate adjusted arm/leg positions relative to neutral
+  const adjustLimbPosition = (neutralPos: number, currentPos: number) => {
+    const offset = currentPos - neutralPos;
+    // For Hard mode, enhance the offset to make movements more dramatic
+    const adjustedOffset = difficulty === 'hard' 
+      ? offset * limbRangeMultiplier * 1.1 // Extra 10% enhancement for Hard mode
+      : offset * limbRangeMultiplier;
+    return neutralPos + adjustedOffset;
+  };
+
+  const neutralConfig = poseConfigs['Neutral'];
+  
+  // Adjust left arm positions
+  const adjustedLeftArm = {
+    ...config.leftArm,
+    elbow: {
+      ...config.leftArm.elbow,
+      x: adjustLimbPosition(neutralConfig.leftArm.elbow.x, config.leftArm.elbow.x),
+      y: adjustLimbPosition(neutralConfig.leftArm.elbow.y, config.leftArm.elbow.y),
+    },
+    hand: {
+      ...config.leftArm.hand,
+      x: adjustLimbPosition(neutralConfig.leftArm.hand.x, config.leftArm.hand.x),
+      y: adjustLimbPosition(neutralConfig.leftArm.hand.y, config.leftArm.hand.y),
+    },
+  };
+
+  // Adjust right arm positions
+  const adjustedRightArm = {
+    ...config.rightArm,
+    elbow: {
+      ...config.rightArm.elbow,
+      x: adjustLimbPosition(neutralConfig.rightArm.elbow.x, config.rightArm.elbow.x),
+      y: adjustLimbPosition(neutralConfig.rightArm.elbow.y, config.rightArm.elbow.y),
+    },
+    hand: {
+      ...config.rightArm.hand,
+      x: adjustLimbPosition(neutralConfig.rightArm.hand.x, config.rightArm.hand.x),
+      y: adjustLimbPosition(neutralConfig.rightArm.hand.y, config.rightArm.hand.y),
+    },
+  };
+
+  // Adjust left leg positions
+  const adjustedLeftLeg = {
+    ...config.leftLeg,
+    knee: {
+      ...config.leftLeg.knee,
+      x: adjustLimbPosition(neutralConfig.leftLeg.knee.x, config.leftLeg.knee.x),
+      y: adjustLimbPosition(neutralConfig.leftLeg.knee.y, config.leftLeg.knee.y),
+    },
+    foot: {
+      ...config.leftLeg.foot,
+      x: adjustLimbPosition(neutralConfig.leftLeg.foot.x, config.leftLeg.foot.x),
+      y: adjustLimbPosition(neutralConfig.leftLeg.foot.y, config.leftLeg.foot.y),
+    },
+  };
+
+  // Adjust right leg positions
+  const adjustedRightLeg = {
+    ...config.rightLeg,
+    knee: {
+      ...config.rightLeg.knee,
+      x: adjustLimbPosition(neutralConfig.rightLeg.knee.x, config.rightLeg.knee.x),
+      y: adjustLimbPosition(neutralConfig.rightLeg.knee.y, config.rightLeg.knee.y),
+    },
+    foot: {
+      ...config.rightLeg.foot,
+      x: adjustLimbPosition(neutralConfig.rightLeg.foot.x, config.rightLeg.foot.x),
+      y: adjustLimbPosition(neutralConfig.rightLeg.foot.y, config.rightLeg.foot.y),
+    },
+  };
+
+  // Glow intensity - increased for better visibility, especially for Hard mode
+  const baseGlowIntensity = difficulty === 'hard' ? 2.5 : (beatActive ? 2.2 : 1.5);
+  const glowIntensity = beatActive ? baseGlowIntensity : (difficulty === 'hard' ? 2.0 : 1.5);
+  
+  // Increased stroke width for better visibility across all difficulty levels
+  // Hard mode gets slightly thicker lines to maintain visibility at high speed
+  const baseStrokeWidth = difficulty === 'easy' ? 4.5 : difficulty === 'medium' ? 4 : difficulty === 'hard' ? 4.2 : 3.5;
+  const strokeWidth = beatActive ? baseStrokeWidth + 1.5 : baseStrokeWidth;
 
   return (
     <div className={`relative ${className} overflow-hidden`}>
@@ -367,7 +510,7 @@ export default function AnimatedGhost({
           scale: beatActive ? [1, 1.15, 1] : [1, 1.03, 1],
         }}
         transition={{
-          duration: 0.5,
+          duration: 0.5 / speedMultiplier,
           repeat: Infinity,
         }}
       />
@@ -377,17 +520,24 @@ export default function AnimatedGhost({
         viewBox="0 0 300 350"
         className="w-full h-full relative z-10"
         style={{
-          filter: `drop-shadow(0 0 ${18 * glowIntensity}px rgba(0, 245, 255, 1)) drop-shadow(0 0 ${35 * glowIntensity}px rgba(255, 0, 80, 0.6))`,
+          filter: `drop-shadow(0 0 ${20 * glowIntensity}px rgba(0, 245, 255, 1)) drop-shadow(0 0 ${40 * glowIntensity}px rgba(255, 0, 80, 0.7))`,
         }}
         animate={{
           x: bodyX,
           y: bodyY,
-          scale: config.bodyScale || 1,
+          scale: difficulty === 'hard' ? (config.bodyScale || 1) * 1.05 : (config.bodyScale || 1), // Slightly larger scale for Hard mode
           rotate: bodyRotation,
         }}
         transition={{
-          duration: 0.5,
-          ease: 'easeOut',
+          duration: difficulty === 'hard' 
+            ? 0.4 / speedMultiplier // Faster transitions for Hard mode
+            : 0.6 / speedMultiplier, // Slightly longer for Easy/Medium visibility
+          ease: difficulty === 'hard' 
+            ? [0.4, 0, 0.2, 1] // Sharper easing for Hard mode (more snappy)
+            : [0.25, 0.1, 0.25, 1], // Smoother easing for Easy/Medium
+          type: difficulty === 'hard' ? 'tween' : 'spring', // Linear for Hard, spring for others
+          stiffness: difficulty === 'hard' ? 200 : 150, // Stiffer spring for Hard mode
+          damping: difficulty === 'hard' ? 10 : 15, // Less damping for Hard mode (faster)
         }}
       >
         {/* Head - connected to neck */}
@@ -396,14 +546,14 @@ export default function AnimatedGhost({
           cy={config.head.cy}
           rx={config.head.r}
           ry={config.head.r * 0.9}
-          fill="rgba(0, 245, 255, 0.3)"
+          fill="rgba(0, 245, 255, 0.5)" // Increased fill opacity for better visibility
           stroke="#00F5FF"
           strokeWidth={strokeWidth}
           animate={{
             cy: [config.head.cy, config.head.cy - 2, config.head.cy],
           }}
           transition={{
-            duration: 1,
+            duration: 1.2 / speedMultiplier, // Slightly slower for clearer movement
             repeat: Infinity,
             ease: 'easeInOut',
           }}
@@ -415,7 +565,7 @@ export default function AnimatedGhost({
           y={config.neck.y}
           width={config.neck.width}
           height={config.neck.height}
-          fill="rgba(0, 245, 255, 0.4)"
+          fill="rgba(0, 245, 255, 0.55)" // Increased fill opacity
           stroke="#00F5FF"
           strokeWidth={strokeWidth}
           rx={2}
@@ -428,7 +578,7 @@ export default function AnimatedGhost({
           y={config.torso.y}
           width={config.torso.width}
           height={config.torso.height}
-          fill="rgba(0, 245, 255, 0.4)"
+          fill="rgba(0, 245, 255, 0.55)" // Increased fill opacity
           stroke="#00F5FF"
           strokeWidth={strokeWidth}
           rx={8}
@@ -437,82 +587,90 @@ export default function AnimatedGhost({
 
         {/* Left Arm */}
         <motion.line
-          x1={config.leftArm.shoulder.x}
-          y1={config.leftArm.shoulder.y}
-          x2={config.leftArm.elbow.x}
-          y2={config.leftArm.elbow.y}
+          x1={adjustedLeftArm.shoulder.x}
+          y1={adjustedLeftArm.shoulder.y}
+          x2={adjustedLeftArm.elbow.x}
+          y2={adjustedLeftArm.elbow.y}
           stroke="#00F5FF"
-          strokeWidth={config.leftArm.width}
+          strokeWidth={Math.max(adjustedLeftArm.width, strokeWidth * 0.8)} // Ensure minimum width
           strokeLinecap="round"
+          strokeOpacity={0.95} // High opacity for clarity
         />
         <motion.line
-          x1={config.leftArm.elbow.x}
-          y1={config.leftArm.elbow.y}
-          x2={config.leftArm.hand.x}
-          y2={config.leftArm.hand.y}
+          x1={adjustedLeftArm.elbow.x}
+          y1={adjustedLeftArm.elbow.y}
+          x2={adjustedLeftArm.hand.x}
+          y2={adjustedLeftArm.hand.y}
           stroke="#00F5FF"
-          strokeWidth={config.leftArm.width - 1}
+          strokeWidth={Math.max(adjustedLeftArm.width - 1, strokeWidth * 0.7)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
 
         {/* Right Arm */}
         <motion.line
-          x1={config.rightArm.shoulder.x}
-          y1={config.rightArm.shoulder.y}
-          x2={config.rightArm.elbow.x}
-          y2={config.rightArm.elbow.y}
+          x1={adjustedRightArm.shoulder.x}
+          y1={adjustedRightArm.shoulder.y}
+          x2={adjustedRightArm.elbow.x}
+          y2={adjustedRightArm.elbow.y}
           stroke="#00F5FF"
-          strokeWidth={config.rightArm.width}
+          strokeWidth={Math.max(adjustedRightArm.width, strokeWidth * 0.8)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
         <motion.line
-          x1={config.rightArm.elbow.x}
-          y1={config.rightArm.elbow.y}
-          x2={config.rightArm.hand.x}
-          y2={config.rightArm.hand.y}
+          x1={adjustedRightArm.elbow.x}
+          y1={adjustedRightArm.elbow.y}
+          x2={adjustedRightArm.hand.x}
+          y2={adjustedRightArm.hand.y}
           stroke="#00F5FF"
-          strokeWidth={config.rightArm.width - 1}
+          strokeWidth={Math.max(adjustedRightArm.width - 1, strokeWidth * 0.7)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
 
         {/* Left Leg */}
         <motion.line
-          x1={config.leftLeg.hip.x}
-          y1={config.leftLeg.hip.y}
-          x2={config.leftLeg.knee.x}
-          y2={config.leftLeg.knee.y}
+          x1={adjustedLeftLeg.hip.x}
+          y1={adjustedLeftLeg.hip.y}
+          x2={adjustedLeftLeg.knee.x}
+          y2={adjustedLeftLeg.knee.y}
           stroke="#00F5FF"
-          strokeWidth={config.leftLeg.width}
+          strokeWidth={Math.max(adjustedLeftLeg.width, strokeWidth * 0.85)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
         <motion.line
-          x1={config.leftLeg.knee.x}
-          y1={config.leftLeg.knee.y}
-          x2={config.leftLeg.foot.x}
-          y2={config.leftLeg.foot.y}
+          x1={adjustedLeftLeg.knee.x}
+          y1={adjustedLeftLeg.knee.y}
+          x2={adjustedLeftLeg.foot.x}
+          y2={adjustedLeftLeg.foot.y}
           stroke="#00F5FF"
-          strokeWidth={config.leftLeg.width - 1}
+          strokeWidth={Math.max(adjustedLeftLeg.width - 1, strokeWidth * 0.75)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
 
         {/* Right Leg */}
         <motion.line
-          x1={config.rightLeg.hip.x}
-          y1={config.rightLeg.hip.y}
-          x2={config.rightLeg.knee.x}
-          y2={config.rightLeg.knee.y}
+          x1={adjustedRightLeg.hip.x}
+          y1={adjustedRightLeg.hip.y}
+          x2={adjustedRightLeg.knee.x}
+          y2={adjustedRightLeg.knee.y}
           stroke="#00F5FF"
-          strokeWidth={config.rightLeg.width}
+          strokeWidth={Math.max(adjustedRightLeg.width, strokeWidth * 0.85)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
         <motion.line
-          x1={config.rightLeg.knee.x}
-          y1={config.rightLeg.knee.y}
-          x2={config.rightLeg.foot.x}
-          y2={config.rightLeg.foot.y}
+          x1={adjustedRightLeg.knee.x}
+          y1={adjustedRightLeg.knee.y}
+          x2={adjustedRightLeg.foot.x}
+          y2={adjustedRightLeg.foot.y}
           stroke="#00F5FF"
-          strokeWidth={config.rightLeg.width - 1}
+          strokeWidth={Math.max(adjustedRightLeg.width - 1, strokeWidth * 0.75)}
           strokeLinecap="round"
+          strokeOpacity={0.95}
         />
       </motion.svg>
     </div>

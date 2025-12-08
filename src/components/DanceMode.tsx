@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff, VolumeX } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, RotateCcw, Volume2, Camera, CameraOff, VolumeX, ChevronDown } from 'lucide-react';
 import { Button } from './ui/button';
 import { Take } from './PublishedTakes';
 import ReplayView from './ReplayView';
@@ -9,6 +9,75 @@ import { useBeatSync } from '../hooks/useBeatSync';
 import MusicSelector from './MusicSelector';
 import AnimatedGhost, { getChoreographyPattern } from './AnimatedGhost';
 import { availableSongs } from '../utils/beatMaps';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
+
+// Generate AI suggestions for a take - called once when video is recorded
+function generateAISuggestions(take: Take): string[] {
+  const allSuggestions: string[] = [];
+  
+  // Duration-based suggestions
+  const durationTips = [
+    'Try recording for longer to capture more moves.',
+    'Great length! Consider breaking into shorter segments for better engagement.',
+    'Perfect timing! Your video length is ideal for TikTok.',
+    'Consider varying your recording length for different content styles.',
+  ];
+  if (take.duration < 5) {
+    allSuggestions.push(durationTips[0]);
+  } else if (take.duration > 30) {
+    allSuggestions.push(durationTips[1]);
+  } else {
+    allSuggestions.push(durationTips[2]);
+  }
+  
+  // Pose sequence variety suggestions
+  const varietyTips = [
+    'Add more variety — try incorporating different poses throughout your dance.',
+    'Excellent pose variety! Your transitions are smooth.',
+    'Mix up your moves — try adding more dynamic transitions.',
+    'Great choreography! Consider adding more complex combinations.',
+    'Your pose variety is good — experiment with faster transitions.',
+  ];
+  if (take.poseSequence.length < 3) {
+    allSuggestions.push(varietyTips[0]);
+  } else if (take.poseSequence.length < 5) {
+    allSuggestions.push(varietyTips[2]);
+  } else {
+    allSuggestions.push(varietyTips[1]);
+  }
+  
+  // Energy and timing suggestions
+  const energyTips = [
+    'Keep practicing to perfect your timing and energy!',
+    'Great energy! Try matching your movements to the beat more closely.',
+    'Your enthusiasm shows! Work on syncing with the music rhythm.',
+    'Excellent performance! Consider adding more dramatic pauses.',
+    'Good flow! Try varying your movement speed for more impact.',
+    'Nice work! Focus on hitting the beats more precisely.',
+  ];
+  allSuggestions.push(...energyTips);
+  
+  // Technique suggestions
+  const techniqueTips = [
+    'Try extending your arms fully for more dramatic movements.',
+    'Great form! Consider adding more body isolation moves.',
+    'Work on your footwork — try more varied leg positions.',
+    'Excellent posture! Keep your core engaged throughout.',
+    'Try adding more upper body movement to complement your steps.',
+  ];
+  allSuggestions.push(...techniqueTips);
+  
+  // Randomly select exactly 2 unique suggestions
+  const shuffled = [...allSuggestions].sort(() => Math.random() - 0.5);
+  const selected = shuffled.slice(0, 2);
+  
+  return selected;
+}
 
 interface DanceModeProps {
   onBack: () => void;
@@ -19,6 +88,7 @@ interface DanceModeProps {
 }
 
 type FacingMode = 'user' | 'environment';
+type DifficultyLevel = 'easy' | 'medium' | 'hard';
 
 // Enhanced dance poses with more distinct movements
 const dancePoses = [
@@ -70,6 +140,8 @@ const dancePoses = [
 ];
 
 export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTakes }: DanceModeProps) {
+  // Local takes state for current session - separate from Published Takes
+  const [localTakes, setLocalTakes] = useState<Take[]>([]);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentPose, setCurrentPose] = useState(0);
@@ -81,6 +153,15 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   const [showReplayView, setShowReplayView] = useState(false);
   const [replayTake, setReplayTake] = useState<Take | null>(null);
   const [beatActive, setBeatActive] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>(() => {
+    const saved = sessionStorage.getItem('danceDifficulty');
+    return (saved as DifficultyLevel) || 'medium';
+  });
+
+  // Save difficulty to sessionStorage
+  useEffect(() => {
+    sessionStorage.setItem('danceDifficulty', difficulty);
+  }, [difficulty]);
   
   // Audio player
   const audioPlayer = useAudioPlayer();
@@ -90,9 +171,58 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     ? getChoreographyPattern(audioPlayer.currentTrack.id)
     : getChoreographyPattern('greedy');
   
-  // Map pose index to choreography pose name
+  // Filter choreography based on difficulty - simpler moves for Easy
+  const getFilteredChoreography = (choreography: string[]): string[] => {
+    // Simple poses suitable for beginners
+    const simplePoses = ['Neutral', 'Gentle Sway', 'Arm Wave', 'Hip Sway'];
+    // Moderate poses - exclude complex ones
+    const moderatePoses = ['Neutral', 'Gentle Sway', 'Arm Wave', 'Hip Sway', 'Side Step', 'Arm Flow', 'Torso Twist'];
+    
+    switch (difficulty) {
+      case 'easy':
+        // Easy: Only simple, basic movements
+        return choreography.filter(pose => simplePoses.includes(pose));
+      case 'medium':
+        // Medium: Moderate movements, no rapid/complex transitions
+        return choreography.filter(pose => moderatePoses.includes(pose));
+      case 'hard':
+        // Hard: All poses including complex ones
+        return choreography;
+      default:
+        return choreography;
+    }
+  };
+
+  // Get filtered choreography for current difficulty
+  const filteredChoreography = getFilteredChoreography(currentChoreography);
+  
+  // Map pose index to choreography pose name (using filtered choreography)
   const getCurrentPoseName = () => {
-    return currentChoreography[currentPose % currentChoreography.length];
+    if (filteredChoreography.length === 0) {
+      return 'Neutral'; // Fallback if all poses filtered out
+    }
+    return filteredChoreography[currentPose % filteredChoreography.length];
+  };
+
+  // Get animation speed based on difficulty - increased contrast
+  const getAnimationSpeed = () => {
+    switch (difficulty) {
+      case 'easy':
+        return 0.5; // Significantly slower (50% speed) for beginners
+      case 'medium':
+        return 0.85; // Slightly faster than Easy, moderate pace
+      case 'hard':
+        return 2.0; // Very fast and challenging (200% speed) - maximum difficulty
+      default:
+        return 1.0;
+    }
+  };
+
+  // Get transition duration based on difficulty
+  const getTransitionDuration = () => {
+    const baseDuration = 0.4;
+    const speed = getAnimationSpeed();
+    return baseDuration / speed;
   };
   
   // Load saved track from sessionStorage
@@ -115,6 +245,8 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   }, [audioPlayer.currentTrack]);
   
   // Beat sync - switch pose on beat using song-specific choreography
+  // For Easy mode, skip some beats to slow down pose changes
+  const beatSkipRef = useRef(0);
   useBeatSync({
     currentTime: audioPlayer.currentTime,
     songId: audioPlayer.currentTrack?.id || null,
@@ -124,23 +256,53 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
       setTimeout(() => setBeatActive(false), 200);
       
       if (isRecording || isPreviewPlaying) {
-        setCurrentPose((prev) => {
-          const nextPose = (prev + 1) % currentChoreography.length;
-          if (isRecording) {
-            setRecordedPoseSequence((seq) => [...seq, nextPose]);
+        // Easy mode: only switch pose every 2 beats (slower tempo)
+        // Medium mode: switch every beat (normal)
+        // Hard mode: switch every beat, and sometimes twice per beat for extra challenge
+        let shouldSwitchPose = false;
+        
+        if (difficulty === 'easy') {
+          shouldSwitchPose = beatSkipRef.current % 2 === 0; // Every 2nd beat for Easy
+        } else if (difficulty === 'hard') {
+          // Hard mode: switch on every beat, and sometimes twice for rapid changes
+          shouldSwitchPose = true;
+          // Occasionally switch twice per beat for extra challenge (20% chance)
+          if (Math.random() < 0.2 && beatSkipRef.current > 0) {
+            setCurrentPose((prev) => {
+              const nextPose = (prev + 1) % filteredChoreography.length;
+              if (isRecording) {
+                setRecordedPoseSequence((seq) => [...seq, nextPose]);
+              }
+              return nextPose;
+            });
           }
-          return nextPose;
-        });
+        } else {
+          // Medium mode: switch every beat (normal)
+          shouldSwitchPose = true;
+        }
+        
+        beatSkipRef.current += 1;
+        
+        if (shouldSwitchPose) {
+          setCurrentPose((prev) => {
+            const nextPose = (prev + 1) % filteredChoreography.length;
+            if (isRecording) {
+              setRecordedPoseSequence((seq) => [...seq, nextPose]);
+            }
+            return nextPose;
+          });
+        }
       }
     },
   });
   
-  // Update choreography when song changes
+  // Update choreography when song or difficulty changes
   useEffect(() => {
-    if (audioPlayer.currentTrack) {
-      setCurrentPose(0); // Reset to first pose when song changes
+    if (audioPlayer.currentTrack || difficulty) {
+      setCurrentPose(0); // Reset to first pose when song or difficulty changes
+      beatSkipRef.current = 0; // Reset beat skip counter
     }
-  }, [audioPlayer.currentTrack]);
+  }, [audioPlayer.currentTrack, difficulty]);
   
   // Camera state
   const [facingMode, setFacingMode] = useState<FacingMode>('user');
@@ -371,17 +533,29 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           const now = new Date();
           const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           
+          // Create take object first
+          const takeId = Date.now().toString();
           const newTake: Take = {
-            id: Date.now().toString(),
+            id: takeId,
             duration: finalDuration,
             lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
             poseSequence: recordedPoseSequence,
             blobUrl: dataUrl, // Store as data URL for persistence
+            // Store music metadata if a track was selected
+            songId: audioPlayer.currentTrack?.id,
+            songName: audioPlayer.currentTrack?.name,
           };
 
-          setTakes((prev) => [newTake, ...prev]);
+          // Generate AI suggestions once when video is recorded (using the take object)
+          const aiSuggestions = generateAISuggestions(newTake);
+          
+          // Add suggestions to the take
+          newTake.aiSuggestions = aiSuggestions;
+
+          // Add to local takes (for current session)
+          setLocalTakes((prev) => [newTake, ...prev]);
         };
         reader.onerror = () => {
           console.error('Failed to convert blob to data URL');
@@ -390,17 +564,29 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
           const now = new Date();
           const timestamp = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           
+          // Create take object first
+          const takeId = Date.now().toString();
           const newTake: Take = {
-            id: Date.now().toString(),
+            id: takeId,
             duration: finalDuration,
             lastMove: getCurrentPoseName(),
             timestamp: timestamp,
             createdAt: now.toLocaleString(),
             poseSequence: recordedPoseSequence,
             blobUrl: blobUrl,
+            // Store music metadata if a track was selected
+            songId: audioPlayer.currentTrack?.id,
+            songName: audioPlayer.currentTrack?.name,
           };
 
-          setTakes((prev) => [newTake, ...prev]);
+          // Generate AI suggestions once when video is recorded (using the take object)
+          const aiSuggestions = generateAISuggestions(newTake);
+          
+          // Add suggestions to the take
+          newTake.aiSuggestions = aiSuggestions;
+
+          // Add to local takes (for current session)
+          setLocalTakes((prev) => [newTake, ...prev]);
         };
         reader.readAsDataURL(blob);
       };
@@ -463,13 +649,14 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
     }
   };
 
+  // Delete from local takes only (does not affect Published Takes)
   const handleDeleteTake = (takeId: string) => {
-    const take = takes.find(t => t.id === takeId);
+    const take = localTakes.find(t => t.id === takeId);
     if (take && take.blobUrl && !take.blobUrl.startsWith('data:')) {
       // Only revoke blob URLs, not data URLs
       URL.revokeObjectURL(take.blobUrl);
     }
-    setTakes(takes.filter(t => t.id !== takeId));
+    setLocalTakes(localTakes.filter(t => t.id !== takeId));
     if (selectedTake === takeId) {
       setSelectedTake(null);
     }
@@ -482,7 +669,7 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
   const handleReplayTake = (takeId: string) => {
     if (isRecording || isPreviewPlaying) return;
     
-    const take = takes.find(t => t.id === takeId);
+    const take = localTakes.find(t => t.id === takeId);
     if (take) {
       setReplayTake(take);
       setShowReplayView(true);
@@ -576,9 +763,58 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
               />
             )}
           </motion.button>
-          <button onClick={onViewTakes} className="text-white text-sm">
-            View Takes
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                className="flex items-center space-x-1.5 rounded-lg bg-[#121212] border-2 border-gray-700 hover:border-[#FF0050] transition-colors px-3 py-2"
+                style={{
+                  minHeight: '44px',
+                }}
+              >
+                <span className="text-white text-sm font-medium">
+                  {difficulty === 'easy' ? 'Easy' : difficulty === 'medium' ? 'Medium' : 'Hard'}
+                </span>
+                <ChevronDown 
+                  className="text-white" 
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    strokeWidth: 2.5,
+                  }}
+                />
+              </motion.button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent 
+              align="end"
+              className="bg-[#1a1a1a] border-gray-700 min-w-[120px]"
+            >
+              <DropdownMenuItem
+                onClick={() => setDifficulty('easy')}
+                className="text-white hover:bg-[#2a2a2a] focus:bg-[#2a2a2a] cursor-pointer"
+              >
+                <span className={difficulty === 'easy' ? 'text-[#FF0050] font-semibold' : ''}>
+                  Easy
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setDifficulty('medium')}
+                className="text-white hover:bg-[#2a2a2a] focus:bg-[#2a2a2a] cursor-pointer"
+              >
+                <span className={difficulty === 'medium' ? 'text-[#FF0050] font-semibold' : ''}>
+                  Medium
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setDifficulty('hard')}
+                className="text-white hover:bg-[#2a2a2a] focus:bg-[#2a2a2a] cursor-pointer"
+              >
+                <span className={difficulty === 'hard' ? 'text-[#FF0050] font-semibold' : ''}>
+                  Hard
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -655,14 +891,22 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
                 clipPath: 'inset(60px 0 0 0)', // Clip top 60px to hide anything above status banner
               }}
               initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 0.6, scale: 1 }}
+              animate={{ opacity: 0.85, scale: 1 }} // Increased opacity for better visibility
               exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.4, ease: 'easeOut' }}
+              transition={{ 
+                duration: getTransitionDuration(), 
+                ease: 'easeOut',
+                // Add a slight bounce for better visibility of transitions
+                type: 'spring',
+                stiffness: 200,
+                damping: 20
+              }}
             >
               <AnimatedGhost
                 poseName={getCurrentPoseName()}
                 beatActive={beatActive}
                 songId={audioPlayer.currentTrack?.id}
+                difficulty={difficulty}
                 className="w-full h-full"
               />
             </motion.div>
@@ -757,16 +1001,16 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         </div>
       </div>
 
-      {/* Takes List */}
+      {/* Takes List - Local takes only (separate from Published Takes) */}
       <div className="absolute top-[600px] bottom-20 left-6 right-6 overflow-hidden">
-        <h3 className="text-white mb-3" style={{ fontSize: '18px' }}>Takes ({takes.length})</h3>
+        <h3 className="text-white mb-3" style={{ fontSize: '18px' }}>Takes ({localTakes.length})</h3>
         <div className="space-y-2 overflow-y-auto max-h-[150px]">
-          {takes.length === 0 ? (
+          {localTakes.length === 0 ? (
             <p className="text-gray-500 text-center py-4" style={{ fontSize: '14px' }}>
               No takes recorded yet
             </p>
           ) : (
-            takes.map((take) => (
+            localTakes.map((take) => (
               <motion.div
                 key={take.id}
                 initial={{ opacity: 0, y: -10 }}
@@ -818,22 +1062,29 @@ export default function DanceMode({ onBack, onPublish, onViewTakes, takes, setTa
         </div>
       </div>
 
-      {/* Publish Button */}
+      {/* Publish Button - Moves local takes to Published Takes */}
       <div className="absolute bottom-4 left-6 right-6">
         <motion.div
           whileTap={{ scale: 0.95 }}
         >
           <Button
-            onClick={onPublish}
-            disabled={takes.length === 0}
+            onClick={() => {
+              // Move all local takes to Published Takes
+              if (localTakes.length > 0) {
+                setTakes((prev) => [...localTakes, ...prev]);
+                setLocalTakes([]); // Clear local takes after publishing
+              }
+              onPublish();
+            }}
+            disabled={localTakes.length === 0}
             className="w-full h-12 rounded-xl text-white disabled:opacity-50"
             style={{
               background: 'linear-gradient(135deg, #00F5FF 0%, #0080FF 100%)',
-              boxShadow: takes.length > 0 ? '0 4px 20px rgba(0, 245, 255, 0.4)' : 'none',
+              boxShadow: localTakes.length > 0 ? '0 4px 20px rgba(0, 245, 255, 0.4)' : 'none',
               fontSize: '16px',
             }}
           >
-            Publish {takes.length > 0 && `(${takes.length} ${takes.length === 1 ? 'Take' : 'Takes'})`}
+            Publish {localTakes.length > 0 && `(${localTakes.length} ${localTakes.length === 1 ? 'Take' : 'Takes'})`}
           </Button>
         </motion.div>
       </div>

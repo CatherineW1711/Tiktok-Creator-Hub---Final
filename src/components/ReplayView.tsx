@@ -1,5 +1,6 @@
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { ArrowLeft, X, Trash2, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, X, Trash2, CheckCircle2, Music } from 'lucide-react';
 import { Button } from './ui/button';
 import { Take } from './PublishedTakes';
 
@@ -10,72 +11,54 @@ interface ReplayViewProps {
   onPublish: () => void;
 }
 
-// Generate dynamic AI suggestions based on take data
-function generateAISuggestions(take: Take): string[] {
-  const suggestions: string[] = [];
-  const allSuggestions: string[] = [];
-  
-  // Duration-based suggestions (randomized)
-  const durationTips = [
-    'Try recording for longer to capture more moves.',
-    'Great length! Consider breaking into shorter segments for better engagement.',
-    'Perfect timing! Your video length is ideal for TikTok.',
-    'Consider varying your recording length for different content styles.',
-  ];
-  if (take.duration < 5) {
-    allSuggestions.push(durationTips[0]);
-  } else if (take.duration > 30) {
-    allSuggestions.push(durationTips[1]);
-  } else {
-    allSuggestions.push(durationTips[2]);
-  }
-  
-  // Pose sequence variety suggestions (randomized)
-  const varietyTips = [
-    'Add more variety — try incorporating different poses throughout your dance.',
-    'Excellent pose variety! Your transitions are smooth.',
-    'Mix up your moves — try adding more dynamic transitions.',
-    'Great choreography! Consider adding more complex combinations.',
-    'Your pose variety is good — experiment with faster transitions.',
-  ];
-  if (take.poseSequence.length < 3) {
-    allSuggestions.push(varietyTips[0]);
-  } else if (take.poseSequence.length < 5) {
-    allSuggestions.push(varietyTips[2]);
-  } else {
-    allSuggestions.push(varietyTips[1]);
-  }
-  
-  // Energy and timing suggestions (randomized)
-  const energyTips = [
-    'Keep practicing to perfect your timing and energy!',
-    'Great energy! Try matching your movements to the beat more closely.',
-    'Your enthusiasm shows! Work on syncing with the music rhythm.',
-    'Excellent performance! Consider adding more dramatic pauses.',
-    'Good flow! Try varying your movement speed for more impact.',
-    'Nice work! Focus on hitting the beats more precisely.',
-  ];
-  allSuggestions.push(...energyTips);
-  
-  // Technique suggestions (randomized)
-  const techniqueTips = [
-    'Try extending your arms fully for more dramatic movements.',
-    'Great form! Consider adding more body isolation moves.',
-    'Work on your footwork — try more varied leg positions.',
-    'Excellent posture! Keep your core engaged throughout.',
-    'Try adding more upper body movement to complement your steps.',
-  ];
-  allSuggestions.push(...techniqueTips);
-  
-  // Randomly select exactly 2 unique suggestions
-  const shuffled = [...allSuggestions].sort(() => Math.random() - 0.5);
-  const selected = shuffled.slice(0, 2);
-  
-  return selected;
-}
-
 export default function ReplayView({ take, onClose, onDelete, onPublish }: ReplayViewProps) {
-  const suggestions = generateAISuggestions(take);
+  // Use stored suggestions from the take object - do NOT regenerate
+  // If suggestions don't exist (for old takes), show empty array
+  const suggestions = take.aiSuggestions || [];
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  // Update progress as video plays
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const updateProgress = () => {
+      setCurrentTime(video.currentTime);
+      if (video.duration && !isNaN(video.duration)) {
+        setDuration(video.duration);
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      if (video.duration && !isNaN(video.duration)) {
+        setDuration(video.duration);
+      }
+    };
+
+    const handleTimeUpdate = () => updateProgress();
+
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+
+    // Initial load
+    handleLoadedMetadata();
+
+    return () => {
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+    };
+  }, [take.blobUrl]);
+
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <div className="relative w-full h-full bg-black overflow-y-auto">
@@ -98,6 +81,7 @@ export default function ReplayView({ take, onClose, onDelete, onPublish }: Repla
           }}
         >
           <video
+            ref={videoRef}
             src={take.blobUrl}
             controls
             autoPlay
@@ -106,6 +90,34 @@ export default function ReplayView({ take, onClose, onDelete, onPublish }: Repla
               backgroundColor: '#000',
             }}
           />
+          
+          {/* Music Label - Top Left */}
+          {take.songName && (
+            <div className="absolute top-3 left-3 bg-black/80 backdrop-blur-md rounded-lg px-3 py-2 flex items-center space-x-2 z-10">
+              <Music className="w-4 h-4 text-[#00F5FF]" />
+              <p className="text-white text-sm font-medium">
+                {take.songName}
+              </p>
+            </div>
+          )}
+          
+          {/* Custom Progress Bar Overlay */}
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50">
+            <motion.div
+              className="h-full bg-[#00F5FF]"
+              style={{ width: `${progress}%` }}
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.1 }}
+            />
+          </div>
+          
+          {/* Time Display */}
+          <div className="absolute bottom-2 right-2 bg-black/70 rounded px-2 py-1">
+            <p className="text-white text-xs">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -129,11 +141,8 @@ export default function ReplayView({ take, onClose, onDelete, onPublish }: Repla
 
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {suggestions.map((suggestion, index) => (
-                <motion.div
+                <div
                   key={index}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.1 }}
                   className="flex items-start"
                 >
                   <p 
@@ -145,7 +154,7 @@ export default function ReplayView({ take, onClose, onDelete, onPublish }: Repla
                   >
                     • {suggestion}
                   </p>
-                </motion.div>
+                </div>
               ))}
             </div>
           </div>
